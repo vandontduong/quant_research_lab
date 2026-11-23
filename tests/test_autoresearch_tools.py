@@ -78,15 +78,18 @@ def test_sync_results_tsv_and_crash_logging(tmp_path):
     lines = tsv.read_text(encoding="utf-8").splitlines()
     assert lines[0] == TSV_HEADER
     assert len(lines) == 4
-    # Every data row must have exact column count matching header (no stray tabs)
-    expected_cols = len(TSV_HEADER.split("\t"))
+    header = TSV_HEADER.split("\t")
+    assert header.index("strategy_note") == header.index("strategy") + 1
+    expected_cols = len(header)
     for row in lines[1:]:
         cols = row.split("\t")
         assert len(cols) == expected_cols
-    assert lines[1].split("\t")[7] == "keep"
-    assert lines[2].split("\t")[7] == "discard"
-    assert lines[3].split("\t")[7] == "crash"
-    assert lines[3].split("\t")[2] == "0.000000"
+    status_idx = header.index("status")
+    sharpe_idx = header.index("oos_sharpe")
+    assert lines[1].split("\t")[status_idx] == "keep"
+    assert lines[2].split("\t")[status_idx] == "discard"
+    assert lines[3].split("\t")[status_idx] == "crash"
+    assert lines[3].split("\t")[sharpe_idx] == "0.000000"
 
 
 def test_analyzer_summary_and_valid_svg_chart(tmp_path):

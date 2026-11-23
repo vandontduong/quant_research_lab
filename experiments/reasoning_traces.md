@@ -50,3 +50,24 @@
 - Drivers: Hardest stress regime `2022_rate_shock` (ret -14.3%, DD -17.1%).
 - Audit: IS→OOS gap -0.182; perturbation drop +0.033; 3x-cost Sharpe drag 0.037; complexity 7 params / 79 SLOC.
 - Next: Positive but sub-margin gain (+0.017 < +0.050); test whether reducing turnover (149%/yr) or combining with a low-correlation defensive filter clears the bar.
+### `cycle_007` — `v007_erc_risk_parity` (`DISCARD`)
+
+- Verdict: DISCARD `v007_erc_risk_parity`: OOS Sharpe 0.818 (-0.221 vs `v001_inv_vol_monthly`); failed [beats_champion_margin].
+- Evidence: vs `v001_inv_vol_monthly`: Sharpe -0.221, Max DD worsened (-19.2% vs -16.2%), turnover increased (74% vs 39%).
+- Drivers: Top contributor `QQQ` (+2.44%/yr), lagging `SHY` (+0.32%/yr). Diversification 3.90 eff. bets, avg cash 0.0%, SPY beta 0.39. Hardest stress regime `2022_rate_shock` (ret -12.5%, DD -15.8%). Fold Sharpe min/med/std=-0.01/1.02/0.81 (86% positive).
+- Audit: IS→OOS gap -0.547; perturbation drop +0.073; DSR(n=8)=76.2%; 3x-cost Sharpe drag 0.016.
+- Next: Signal materially underperformed champion (whipsaw or cash drag); avoid hard binary cutoffs and test continuous risk-budget adjustments instead.
+### `cycle_008` — `v008_downside_vol_inv_weight` (`DISCARD`)
+
+- Verdict: DISCARD `v008_downside_vol_inv_weight`: OOS Sharpe 1.040 (+0.002 vs `v001_inv_vol_monthly`); failed [beats_champion_margin].
+- Evidence: vs `v001_inv_vol_monthly`: Sharpe +0.002, Max DD held flat (-16.3% vs -16.2%), turnover increased (44% vs 39%).
+- Drivers: Top contributor `QQQ` (+1.90%/yr), lagging `SHY` (+0.36%/yr). Diversification 4.17 eff. bets, avg cash 0.0%, SPY beta 0.28. Hardest stress regime `2022_rate_shock` (ret -12.2%, DD -15.4%). Fold Sharpe min/med/std=0.25/0.84/0.71 (100% positive).
+- Audit: IS→OOS gap -0.035; perturbation drop +0.031; DSR(n=9)=84.6%; 3x-cost Sharpe drag 0.015.
+- Next: Positive but sub-margin gain (+0.002 < +0.050); test whether reducing turnover (44%/yr) or combining with a low-correlation defensive filter clears the bar.
+### `cycle_009` — `v009_rate_regime_inv_vol` (`DISCARD`)
+
+- Verdict: DISCARD `v009_rate_regime_inv_vol`: OOS Sharpe 1.042 (+0.003 vs `v001_inv_vol_monthly`); failed [beats_champion_margin].
+- Evidence: vs `v001_inv_vol_monthly`: Sharpe +0.003, Max DD held flat (-16.1% vs -16.2%), turnover kept flat (39% vs 39%).
+- Drivers: Top contributor `QQQ` (+1.91%/yr), lagging `SHY` (+0.37%/yr). Diversification 4.14 eff. bets, avg cash 0.0%, SPY beta 0.28. Hardest stress regime `2022_rate_shock` (ret -12.0%, DD -15.3%). Fold Sharpe min/med/std=0.26/0.86/0.72 (100% positive).
+- Audit: IS→OOS gap -0.042; perturbation drop +0.001; DSR(n=10)=69.1%; 3x-cost Sharpe drag 0.013.
+- Next: Positive but sub-margin gain (+0.003 < +0.050); test whether reducing turnover (39%/yr) or combining with a low-correlation defensive filter clears the bar.

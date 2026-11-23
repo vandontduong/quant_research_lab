@@ -12,8 +12,37 @@ from engine.runner import read_ledger
 from tools.complexity import analyze_strategy_complexity
 
 TSV_HEADER = (
-    "commit\tcycle_id\toos_sharpe\toos_max_dd\tannual_turnover\tsloc\tparams\tstatus\tdescription"
+    "commit\tcycle_id\tstrategy\tstrategy_note\toos_sharpe\toos_max_dd\t"
+    "annual_turnover\tsloc\tparams\tstatus\tdescription"
 )
+
+STRATEGY_NOTES: dict[str, str] = {
+    "v000_equal_weight_monthly": "Monthly equal-weight (1/6) across all 6 ETFs (naive baseline).",
+    "v001_inv_vol_monthly": "Monthly 63d inverse-volatility weighting with 4% vol floor and 45% cap.",
+    "v002_inv_vol_trend_filter": "Inverse-vol with binary 126d SMA trend cutoff routing below-SMA assets to cash.",
+    "v003_inv_vol_top_momentum": "Inverse-vol concentrated in top-3 ETFs ranked by trailing 126d momentum.",
+    "v004_corr_aware_risk_parity": "Inverse-vol penalized by average positive 63d pairwise correlation.",
+    "v005_soft_trend_inv_vol": "Inverse-vol tilted smoothly by exp(0.5 * z_excess_return vs SHY), 100% invested.",
+    "v006_vol_targeted_inv_vol": "Inverse-vol risky sleeve scaled to 8% fast 21d portfolio vol target; excess to SHY/cash.",
+    "v007_erc_risk_parity": "True Equal Risk Contribution (ERC) solved on shrunk 126d covariance matrix.",
+    "v008_downside_vol_inv_weight": "Inverse-risk weighting blending 60% downside semideviation and 40% total vol.",
+    "v009_rate_regime_inv_vol": "Inverse-vol scaling down TLT when trailing 63d SPY-TLT correlation turns positive.",
+}
+
+
+def get_strategy_note(record: dict[str, Any]) -> str:
+    """Return a concise single-line note explaining a strategy."""
+    explicit = str(record.get("strategy_note") or "").strip()
+    if explicit:
+        return _sanitize_tsv_field(explicit, max_len=110)
+    strat_name = str(record.get("strategy_name") or "").strip()
+    if strat_name in STRATEGY_NOTES:
+        return STRATEGY_NOTES[strat_name]
+    hyp = str(record.get("hypothesis") or "").strip()
+    if hyp:
+        first_sentence = hyp.split(". ")[0].rstrip(".") + "."
+        return _sanitize_tsv_field(first_sentence, max_len=110)
+    return "Candidate strategy."
 
 
 def get_short_git_commit(root_dir: str | Path = ".") -> str:
@@ -74,19 +103,18 @@ def format_tsv_row(record: dict[str, Any], *, root_dir: str | Path = ".") -> str
     sloc = int(comp.get("sloc", 0))
     param_count = int(comp.get("param_count", 0))
 
-    strat_name = str(record.get("strategy_name", "")).strip()
+    strat_name = _sanitize_tsv_field(str(record.get("strategy_name", "unknown")), max_len=48)
+    strat_note = get_strategy_note(record)
     hyp = str(record.get("hypothesis", "")).strip()
     if status == "crash" and record.get("error"):
-        desc_raw = f"{strat_name}: CRASH ({record['error']})"
-    elif strat_name and hyp:
-        desc_raw = f"{strat_name} — {hyp}"
+        desc_raw = f"CRASH ({record['error']})"
     else:
-        desc_raw = strat_name or hyp or "experiment"
+        desc_raw = hyp or strat_note
     desc = _sanitize_tsv_field(desc_raw, max_len=140)
 
     return (
-        f"{commit}\t{cycle_id}\t{oos_sharpe:.6f}\t{oos_max_dd:.6f}\t"
-        f"{ann_to:.4f}\t{sloc}\t{param_count}\t{status}\t{desc}"
+        f"{commit}\t{cycle_id}\t{strat_name}\t{strat_note}\t{oos_sharpe:.6f}\t"
+        f"{oos_max_dd:.6f}\t{ann_to:.4f}\t{sloc}\t{param_count}\t{status}\t{desc}"
     )
 
 
