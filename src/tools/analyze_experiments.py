@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from engine.policy import load_policy
+from engine.reasoning import format_reasoning_trace_markdown, generate_reasoning_trace
 from engine.runner import read_ledger
 from tools.complexity import analyze_strategy_complexity
 from tools.results_tsv import sync_results_tsv
@@ -406,9 +407,45 @@ def format_terminal_report(
     return "\n".join(lines)
 
 
+def sync_reasoning_traces_md(
+    rows: list[dict[str, Any]],
+    output_path: str | Path,
+    *,
+    root_dir: str | Path = ".",
+) -> int:
+    """Write concise, chronological reasoning traces for all experiments to Markdown."""
+    out = Path(output_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    root = Path(root_dir)
+    chunks = [
+        "# Experiment Reasoning Traces\n",
+        "> Concise, evidence-backed traces auto-generated from `experiments/ledger.jsonl`.\n\n",
+    ]
+    running_champion: dict[str, Any] | None = None
+    for row in rows:
+        rec = dict(row)
+        if not isinstance(rec.get("reasoning_trace"), dict) or not rec["reasoning_trace"].get("summary_lines"):
+            strat_rel = rec.get("strategy_file", "")
+            comp = analyze_strategy_complexity(
+                (root / strat_rel) if strat_rel else Path(),
+                rec.get("params"),
+            )
+            rec["reasoning_trace"] = generate_reasoning_trace(
+                rec,
+                prior_champion=running_champion,
+                complexity=comp,
+            )
+        chunks.append(format_reasoning_trace_markdown(rec))
+        if _status_of(rec) == "KEEP":
+            running_champion = rec
+
+    out.write_text("".join(chunks), encoding="utf-8")
+    return len(rows)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Analyze quant_research_lab experiments, sync results.tsv, and plot progress.svg."
+        description="Analyze quant_research_lab experiments, sync results.tsv, traces, and plot progress.svg."
     )
     parser.add_argument("--root", type=Path, default=Path("."), help="Repository root directory.")
     parser.add_argument(
@@ -417,12 +454,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--no-tsv", action="store_true", help="Skip regenerating experiments/results.tsv."
     )
+    parser.add_argument(
+        "--no-traces", action="store_true", help="Skip regenerating experiments/reasoning_traces.md."
+    )
     args = parser.parse_args(argv)
 
     root = args.root.resolve()
     ledger_path = root / "experiments" / "ledger.jsonl"
     tsv_path = root / "experiments" / "results.tsv"
     svg_path = root / "experiments" / "progress.svg"
+    traces_path = root / "experiments" / "reasoning_traces.md"
 
     rows = read_ledger(ledger_path)
     stop_limit: int | None = None
@@ -435,6 +476,10 @@ def main(argv: list[str] | None = None) -> int:
         n_rows = sync_results_tsv(ledger_path, tsv_path, root_dir=root)
         print(f"Synced {n_rows} rows -> {tsv_path.relative_to(root)}")
 
+    if not args.no_traces:
+        n_traces = sync_reasoning_traces_md(rows, traces_path, root_dir=root)
+        print(f"Synced {n_traces} reasoning traces -> {traces_path.relative_to(root)}")
+
     if not args.no_svg:
         render_progress_svg(rows, svg_path)
         print(f"Rendered frontier chart -> {svg_path.relative_to(root)}")
@@ -442,6 +487,18 @@ def main(argv: list[str] | None = None) -> int:
     summary = compute_experiment_summary(rows, root_dir=root)
     print()
     print(format_terminal_report(summary, stop_after_consecutive_discards=stop_limit))
+    if rows:
+        last_row = dict(rows[-1])
+        running_champ = None
+        for r in rows[:-1]:
+            if _status_of(r) == "KEEP":
+                running_champ = r
+        trace = last_row.get("reasoning_trace") or generate_reasoning_trace(
+            last_row, prior_champion=running_champ
+        )
+        print("\nLatest Experiment Reasoning Trace:")
+        for line in trace.get("summary_lines", []):
+            print(f"  - {line}")
     return 0
 
 

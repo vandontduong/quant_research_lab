@@ -11,8 +11,10 @@ from typing import Any
 
 import pandas as pd
 
+from engine.backtest import compute_deflated_sharpe
 from engine.data_loader import load_frozen_prices
 from engine.policy import RiskPolicy, evaluate_gates, load_policy
+from engine.reasoning import format_reasoning_trace_markdown, generate_reasoning_trace
 from engine.validation import StrategyFn, evaluate_perturbation_stability, evaluate_walk_forward
 
 
@@ -67,6 +69,7 @@ def run_cycle(
     )
 
     ledger_path = root / "experiments" / "ledger.jsonl"
+    traces_path = root / "experiments" / "reasoning_traces.md"
     best_dir = root / "experiments" / "best_candidate"
     ledger_path.parent.mkdir(parents=True, exist_ok=True)
     best_dir.mkdir(parents=True, exist_ok=True)
@@ -87,7 +90,8 @@ def run_cycle(
 
     # Candidate evaluation
     cand_eval = evaluate_walk_forward(strategy_fn, dev_prices, params, policy)
-    base_oos_sharpe = float(cand_eval["out_of_sample"]["sharpe"])
+    oos = cand_eval["out_of_sample"]
+    base_oos_sharpe = float(oos["sharpe"])
     perturbation_drop = evaluate_perturbation_stability(
         strategy_fn,
         dev_prices,
@@ -100,10 +104,18 @@ def run_cycle(
     gate_result = evaluate_gates(
         policy,
         is_metrics=cand_eval["in_sample"],
-        oos_metrics=cand_eval["out_of_sample"],
+        oos_metrics=oos,
         perturbation_drop=perturbation_drop,
         champion_oos_sharpe=champion_oos_sharpe,
         is_baseline=is_baseline,
+    )
+
+    deflated_sharpe = compute_deflated_sharpe(
+        base_oos_sharpe,
+        observations=int(oos["observations"]),
+        trial_count=trial_count,
+        skewness=float(oos.get("skewness", 0.0)),
+        excess_kurtosis=float(oos.get("excess_kurtosis", 0.0)),
     )
 
     decision = "PROMOTE" if gate_result["promote"] else "DISCARD"
@@ -121,9 +133,12 @@ def run_cycle(
         "dataset_sha256": manifest["sha256"],
         "runtime_sec": runtime_sec,
         "in_sample": cand_eval["in_sample"],
-        "out_of_sample": cand_eval["out_of_sample"],
+        "out_of_sample": oos,
+        "deflated_sharpe": deflated_sharpe,
         "fold_count": cand_eval["fold_count"],
         "folds": cand_eval["folds"],
+        "fold_consistency": cand_eval.get("fold_consistency", {}),
+        "attribution": cand_eval.get("attribution", {}),
         "regime_breakdown": cand_eval.get("regime_breakdown", {}),
         "cost_sensitivity": cand_eval.get("cost_sensitivity", {}),
         "benchmark_oos": bench_eval["out_of_sample"],
@@ -131,9 +146,15 @@ def run_cycle(
         "gates": gate_result,
         "decision": decision,
     }
+    record["reasoning_trace"] = generate_reasoning_trace(record, prior_champion=champion)
 
     with ledger_path.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(record) + "\n")
+
+    if not traces_path.exists():
+        traces_path.write_text("# Experiment Reasoning Traces\n\n", encoding="utf-8")
+    with traces_path.open("a", encoding="utf-8") as fh:
+        fh.write(format_reasoning_trace_markdown(record))
 
     if decision == "PROMOTE":
         shutil.copy2(strategy_file, best_dir / "strategy.py")
@@ -223,6 +244,33 @@ def _write_champion_memo(
                 f"| `{cname}` | {cm['cost_bps_per_side']:.1f} | {cm['oos_cagr']*100:.2f}% | "
                 f"{cm['oos_sharpe']:.3f} | {cm['oos_max_drawdown']*100:.2f}% |"
             )
+
+    attrib = record.get("attribution") or {}
+    if attrib and attrib.get("avg_weights"):
+        lines += [
+            "",
+            "## Portfolio Attribution (Development OOS)",
+            "",
+            (
+                f"- **Exposure:** avg gross `{attrib['avg_gross_exposure']*100:.1f}%`, "
+                f"cash `{attrib['avg_cash_weight']*100:.1f}%`, "
+                f"effective bets `{attrib['avg_effective_bets']:.2f}`, "
+                f"SPY beta `{attrib['benchmark_beta']:.2f}` (corr `{attrib['benchmark_correlation']:.2f}`)"
+            ),
+            "",
+            "| Asset | Avg Weight | Annualized Contribution |",
+            "| --- | ---: | ---: |",
+        ]
+        contribs = attrib.get("annualized_contribution") or {}
+        for ticker, avg_w in attrib["avg_weights"].items():
+            c_val = float(contribs.get(ticker, 0.0))
+            lines.append(f"| `{ticker}` | {avg_w*100:.1f}% | {c_val*100:+.2f}% |")
+
+    trace = record.get("reasoning_trace") or {}
+    if trace.get("summary_lines"):
+        lines += ["", "## Concise Reasoning Trace", ""]
+        for item in trace["summary_lines"]:
+            lines.append(f"- {item}")
 
     lines += [
         "",
