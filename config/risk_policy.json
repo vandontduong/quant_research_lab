@@ -1,0 +1,40 @@
+{
+  "policy_version": "1.0.0",
+  "research_only": true,
+  "allow_live_execution": false,
+  "universe": ["SPY", "QQQ", "IWM", "TLT", "GLD", "SHY"],
+  "benchmark_ticker": "SPY",
+  "cash_proxy_ticker": "SHY",
+  "data_basis": "total_return_auto_adjusted",
+  "splits": {
+    "development_start": "2005-01-03",
+    "development_end": "2023-12-29",
+    "holdout_start": "2024-01-02",
+    "holdout_locked": true,
+    "walk_forward_train_days": 1260,
+    "walk_forward_purge_days": 21,
+    "walk_forward_test_days": 504,
+    "walk_forward_step_days": 504
+  },
+  "execution": {
+    "signal_lag_bars": 1,
+    "commission_bps_per_side": 1.0,
+    "slippage_bps_per_side": 4.0,
+    "allow_short": false,
+    "max_gross_leverage": 1.0,
+    "max_single_asset_weight": 0.5
+  },
+  "risk_gates": {
+    "max_oos_drawdown": -0.25,
+    "max_annual_turnover": 6.0,
+    "min_rebalance_events": 24,
+    "max_is_to_oos_sharpe_degradation": 0.5,
+    "max_perturbation_sharpe_drop": 0.2
+  },
+  "promotion": {
+    "primary_objective": "oos_sharpe",
+    "min_oos_sharpe_improvement": 0.05,
+    "max_cycles_per_invocation": 3,
+    "stop_after_consecutive_discards": 3
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "dataset": "etf_daily_total_return.csv",
+  "sha256": "7cd3f749d2fbb0b7906506e7a7d597b1e7ce924b16f5d102ecb2271899e0f3cf",
+  "source": "yfinance",
+  "return_basis": "total_return (auto_adjust=True, split and dividend adjusted)",
+  "corporate_action_notes": "Prices are split- and dividend-adjusted closes; common intersection across all tickers.",
+  "tickers": [
+    "SPY",
+    "QQQ",
+    "IWM",
+    "TLT",
+    "GLD",
+    "SHY"
+  ],
+  "start_date": "2004-11-22",
+  "end_date": "2026-11-23",
+  "rows": 5536,
+  "frozen_at_utc": "2026-11-23T18:03:04Z"
+}

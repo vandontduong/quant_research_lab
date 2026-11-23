@@ -1,0 +1,69 @@
+{
+  "audited_at_utc": "2026-11-23T19:18:54Z",
+  "policy_sha256": "b8b1dd5fc55778a66df37dadd58141528e5b7ea489fafe27cba95c3e0e465ec7",
+  "dataset_sha256": "7cd3f749d2fbb0b7906506e7a7d597b1e7ce924b16f5d102ecb2271899e0f3cf",
+  "holdout_window": {
+    "start": "2024-01-02",
+    "end": "2026-11-23"
+  },
+  "champion_v001": {
+    "name": "v001_inv_vol_monthly",
+    "holdout_5bps": {
+      "start_date": "2024-01-02",
+      "end_date": "2026-11-23",
+      "observations": 727,
+      "total_return": 0.271339,
+      "cagr": 0.086581,
+      "annual_volatility": 0.070914,
+      "sharpe": 1.209061,
+      "sortino": 1.189238,
+      "max_drawdown": -0.062748,
+      "calmar": 1.379809,
+      "worst_day": -0.017581,
+      "cvar_95_daily": -0.009958,
+      "annual_turnover": 0.381675,
+      "rebalance_events": 35
+    },
+    "holdout_15bps_sharpe": 1.19829
+  },
+  "baseline_v000": {
+    "name": "v000_equal_weight_monthly",
+    "holdout_5bps": {
+      "start_date": "2024-01-02",
+      "end_date": "2026-11-23",
+      "observations": 727,
+      "total_return": 0.388731,
+      "cagr": 0.120286,
+      "annual_volatility": 0.113705,
+      "sharpe": 1.058003,
+      "sortino": 1.042963,
+      "max_drawdown": -0.106989,
+      "calmar": 1.124281,
+      "worst_day": -0.028585,
+      "cvar_95_daily": -0.016164,
+      "annual_turnover": 0.170347,
+      "rebalance_events": 35
+    },
+    "holdout_15bps_sharpe": 1.054988
+  },
+  "benchmark_spy": {
+    "name": "SPY_buy_and_hold",
+    "holdout_5bps": {
+      "start_date": "2024-01-02",
+      "end_date": "2026-11-23",
+      "observations": 727,
+      "total_return": 0.570608,
+      "cagr": 0.169004,
+      "annual_volatility": 0.161084,
+      "sharpe": 1.051814,
+      "sortino": 1.03277,
+      "max_drawdown": -0.187552,
+      "calmar": 0.901105,
+      "worst_day": -0.058543,
+      "cvar_95_daily": -0.023225,
+      "annual_turnover": 0.0,
+      "rebalance_events": 0
+    },
+    "holdout_15bps_sharpe": 1.051814
+  }
+}

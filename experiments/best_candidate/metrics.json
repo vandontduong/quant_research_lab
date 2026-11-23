@@ -1,0 +1,208 @@
+{
+  "timestamp_utc": "2026-11-23T18:07:15Z",
+  "cycle_id": "cycle_001",
+  "trial_count": 2,
+  "strategy_name": "v001_inv_vol_monthly",
+  "strategy_file": "src/strategies/v001_inv_vol.py",
+  "params": {
+    "vol_window": 63,
+    "rebalance_every_days": 21,
+    "min_vol_floor": 0.04,
+    "max_weight": 0.45
+  },
+  "hypothesis": "Replace static equal-weight with trailing 63-day inverse-volatility weighting (with 4% annualized vol floor and 45% target single-asset cap, trimmed if drift > 49.5%) to equalize risk contributions and reduce drawdown clustering during equity/rate volatility spikes.",
+  "policy_sha256": "b8b1dd5fc55778a66df37dadd58141528e5b7ea489fafe27cba95c3e0e465ec7",
+  "dataset_sha256": "7cd3f749d2fbb0b7906506e7a7d597b1e7ce924b16f5d102ecb2271899e0f3cf",
+  "runtime_sec": 1.038,
+  "in_sample": {
+    "start_date": "2005-01-04",
+    "end_date": "2010-01-04",
+    "observations": 1259,
+    "total_return": 0.390941,
+    "cagr": 0.068232,
+    "annual_volatility": 0.067146,
+    "sharpe": 1.01731,
+    "sortino": 1.017341,
+    "max_drawdown": -0.115888,
+    "calmar": 0.588775,
+    "annual_turnover": 0.486556,
+    "rebalance_events": 60
+  },
+  "out_of_sample": {
+    "start_date": "2010-02-04",
+    "end_date": "2023-12-29",
+    "observations": 3500,
+    "total_return": 1.355942,
+    "cagr": 0.063603,
+    "annual_volatility": 0.061228,
+    "sharpe": 1.038457,
+    "sortino": 0.97929,
+    "max_drawdown": -0.161542,
+    "calmar": 0.393725,
+    "annual_turnover": 0.387368,
+    "rebalance_events": 167
+  },
+  "fold_count": 7,
+  "folds": [
+    {
+      "fold": 1,
+      "start_date": "2010-02-04",
+      "end_date": "2012-02-02",
+      "observations": 504,
+      "total_return": 0.248853,
+      "cagr": 0.117947,
+      "annual_volatility": 0.06208,
+      "sharpe": 1.821199,
+      "sortino": 1.777394,
+      "max_drawdown": -0.033209,
+      "calmar": 3.551687,
+      "annual_turnover": 0.299485,
+      "rebalance_events": 24
+    },
+    {
+      "fold": 2,
+      "start_date": "2012-02-03",
+      "end_date": "2014-02-05",
+      "observations": 504,
+      "total_return": 0.090777,
+      "cagr": 0.044248,
+      "annual_volatility": 0.052117,
+      "sharpe": 0.859715,
+      "sortino": 0.812301,
+      "max_drawdown": -0.036374,
+      "calmar": 1.216484,
+      "annual_turnover": 0.398122,
+      "rebalance_events": 24
+    },
+    {
+      "fold": 3,
+      "start_date": "2014-02-06",
+      "end_date": "2016-02-05",
+      "observations": 504,
+      "total_return": 0.068772,
+      "cagr": 0.033885,
+      "annual_volatility": 0.050368,
+      "sharpe": 0.68543,
+      "sortino": 0.661274,
+      "max_drawdown": -0.056376,
+      "calmar": 0.60105,
+      "annual_turnover": 0.39264,
+      "rebalance_events": 24
+    },
+    {
+      "fold": 4,
+      "start_date": "2016-02-08",
+      "end_date": "2018-02-06",
+      "observations": 504,
+      "total_return": 0.206461,
+      "cagr": 0.098602,
+      "annual_volatility": 0.042985,
+      "sharpe": 2.205097,
+      "sortino": 2.066204,
+      "max_drawdown": -0.038036,
+      "calmar": 2.592313,
+      "annual_turnover": 0.388712,
+      "rebalance_events": 24
+    },
+    {
+      "fold": 5,
+      "start_date": "2018-02-07",
+      "end_date": "2020-02-07",
+      "observations": 504,
+      "total_return": 0.162653,
+      "cagr": 0.078319,
+      "annual_volatility": 0.047887,
+      "sharpe": 1.597681,
+      "sortino": 1.534096,
+      "max_drawdown": -0.053739,
+      "calmar": 1.45741,
+      "annual_turnover": 0.568553,
+      "rebalance_events": 24
+    },
+    {
+      "fold": 6,
+      "start_date": "2020-02-10",
+      "end_date": "2022-02-07",
+      "observations": 504,
+      "total_return": 0.115881,
+      "cagr": 0.056552,
+      "annual_volatility": 0.080312,
+      "sharpe": 0.722901,
+      "sortino": 0.633913,
+      "max_drawdown": -0.119829,
+      "calmar": 0.471936,
+      "annual_turnover": 0.360905,
+      "rebalance_events": 24
+    },
+    {
+      "fold": 7,
+      "start_date": "2022-02-08",
+      "end_date": "2023-12-29",
+      "observations": 476,
+      "total_return": 0.033835,
+      "cagr": 0.017796,
+      "annual_volatility": 0.08203,
+      "sharpe": 0.255656,
+      "sortino": 0.257128,
+      "max_drawdown": -0.131039,
+      "calmar": 0.135807,
+      "annual_turnover": 0.298203,
+      "rebalance_events": 23
+    }
+  ],
+  "benchmark_oos": {
+    "start_date": "2010-02-04",
+    "end_date": "2023-12-29",
+    "observations": 3500,
+    "total_return": 4.629026,
+    "cagr": 0.132396,
+    "annual_volatility": 0.173337,
+    "sharpe": 0.804906,
+    "sortino": 0.75283,
+    "max_drawdown": -0.337173,
+    "calmar": 0.392666,
+    "annual_turnover": 0.0,
+    "rebalance_events": 0
+  },
+  "perturbation_sharpe_drop": 0.027717,
+  "gates": {
+    "promote": true,
+    "risk_passed": true,
+    "beats_champion": true,
+    "oos_sharpe_improvement": 0.092735,
+    "failed_gates": [],
+    "checks": {
+      "max_oos_drawdown": {
+        "passed": true,
+        "actual": -0.161542,
+        "limit": -0.25
+      },
+      "max_annual_turnover": {
+        "passed": true,
+        "actual": 0.387368,
+        "limit": 6.0
+      },
+      "min_rebalance_events": {
+        "passed": true,
+        "actual": 167,
+        "limit": 24
+      },
+      "is_to_oos_sharpe_degradation": {
+        "passed": true,
+        "actual": -0.021147,
+        "limit": 0.5
+      },
+      "perturbation_stability": {
+        "passed": true,
+        "actual": 0.027717,
+        "limit": 0.2
+      },
+      "beats_champion_margin": {
+        "passed": true,
+        "actual": 0.092735,
+        "limit": 0.05
+      }
+    }
+  },
+  "decision": "PROMOTE"
+}
