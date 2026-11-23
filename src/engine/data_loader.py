@@ -80,7 +80,11 @@ def load_frozen_prices(
                 f"(expected {manifest.get('sha256')}, got {actual_hash})."
             )
 
-    df = pd.read_csv(csv_path, parse_dates=["date"]).set_index("date").sort_index()
+    df = pd.read_csv(csv_path, parse_dates=["date"]).set_index("date")
+    if df.index.has_duplicates:
+        raise ValueError("Frozen price matrix contains duplicate dates.")
+    if not df.index.is_monotonic_increasing:
+        df = df.sort_index()
     if tickers is not None:
         missing = [t for t in tickers if t not in df.columns]
         if missing:
@@ -90,6 +94,10 @@ def load_frozen_prices(
         df = df.loc[df.index >= pd.Timestamp(start)]
     if end is not None:
         df = df.loc[df.index <= pd.Timestamp(end)]
+    if df.empty:
+        raise ValueError("Frozen price matrix is empty after date slicing.")
     if df.isna().any().any():
         raise ValueError("Frozen price matrix contains NaN values.")
+    if not (df.to_numpy(dtype=float) > 0.0).all():
+        raise ValueError("Frozen price matrix contains non-positive or non-finite prices.")
     return df, manifest

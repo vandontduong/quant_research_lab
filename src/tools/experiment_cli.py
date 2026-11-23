@@ -21,8 +21,10 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
+from engine.backtest import compute_deflated_sharpe
 from engine.data_loader import load_frozen_prices
 from engine.policy import evaluate_gates, load_policy
+from engine.reasoning import generate_reasoning_trace
 from engine.runner import load_champion_metrics, read_ledger, run_cycle
 from engine.validation import evaluate_perturbation_stability, evaluate_walk_forward
 from tools.complexity import analyze_strategy_complexity
@@ -184,7 +186,9 @@ def run_experiment_cli(argv: list[str] | None = None) -> int:
                     verify_hash=True,
                 )
                 cand_eval = evaluate_walk_forward(mod.generate_weights, dev_prices, params, policy)
-                oos_sharpe = float(cand_eval["out_of_sample"]["sharpe"])
+                oos = cand_eval["out_of_sample"]
+                ins = cand_eval["in_sample"]
+                oos_sharpe = float(oos["sharpe"])
                 pdrop = evaluate_perturbation_stability(
                     mod.generate_weights,
                     dev_prices,
@@ -197,16 +201,44 @@ def run_experiment_cli(argv: list[str] | None = None) -> int:
                 champ_sharpe = float(champ["out_of_sample"]["sharpe"]) if champ else None
                 gates = evaluate_gates(
                     policy,
-                    is_metrics=cand_eval["in_sample"],
-                    oos_metrics=cand_eval["out_of_sample"],
+                    is_metrics=ins,
+                    oos_metrics=oos,
                     perturbation_drop=pdrop,
                     champion_oos_sharpe=champ_sharpe,
                     is_baseline=args.baseline,
                 )
+                trial_count = len(read_ledger(ledger_path)) + 1
+                dsr = compute_deflated_sharpe(
+                    oos_sharpe,
+                    observations=int(oos["observations"]),
+                    trial_count=trial_count,
+                    skewness=float(oos.get("skewness", 0.0)),
+                    excess_kurtosis=float(oos.get("excess_kurtosis", 0.0)),
+                )
                 decision = "PROMOTE" if gates["promote"] else "DISCARD"
                 runtime_sec = round(time.perf_counter() - t0, 3)
-                oos = cand_eval["out_of_sample"]
-                ins = cand_eval["in_sample"]
+                attrib = cand_eval.get("attribution") or {}
+                synthetic_record = {
+                    "cycle_id": cycle_id,
+                    "trial_count": trial_count,
+                    "strategy_name": strategy_name,
+                    "in_sample": ins,
+                    "out_of_sample": oos,
+                    "deflated_sharpe": dsr,
+                    "folds": cand_eval["folds"],
+                    "fold_consistency": cand_eval.get("fold_consistency", {}),
+                    "attribution": attrib,
+                    "regime_breakdown": cand_eval.get("regime_breakdown", {}),
+                    "cost_sensitivity": cand_eval.get("cost_sensitivity", {}),
+                    "perturbation_sharpe_drop": pdrop,
+                    "gates": gates,
+                    "decision": decision,
+                }
+                trace = generate_reasoning_trace(
+                    synthetic_record,
+                    prior_champion=champ,
+                    complexity=complexity,
+                )
             else:
                 record = run_cycle(
                     cycle_id=cycle_id,
@@ -225,29 +257,40 @@ def run_experiment_cli(argv: list[str] | None = None) -> int:
                 oos = record["out_of_sample"]
                 ins = record["in_sample"]
                 gates = record["gates"]
+                dsr = record.get("deflated_sharpe")
+                attrib = record.get("attribution") or {}
+                trace = record.get("reasoning_trace") or generate_reasoning_trace(
+                    record, complexity=complexity
+                )
 
         failed_str = ",".join(gates.get("failed_gates", [])) or "none"
         status = "keep" if decision == "PROMOTE" else "discard"
-        print_summary_block(
-            {
-                "cycle_id": cycle_id,
-                "strategy_name": strategy_name,
-                "git_commit": git_commit,
-                "dry_run": str(args.dry_run).lower(),
-                "oos_sharpe": f"{float(oos['sharpe']):.6f}",
-                "is_sharpe": f"{float(ins['sharpe']):.6f}",
-                "oos_cagr": f"{float(oos['cagr']):.6f}",
-                "oos_max_drawdown": f"{float(oos['max_drawdown']):.6f}",
-                "annual_turnover": f"{float(oos['annual_turnover']):.6f}",
-                "param_count": complexity["param_count"],
-                "sloc": complexity["sloc"],
-                "branch_count": complexity["branch_count"],
-                "runtime_sec": f"{runtime_sec:.3f}",
-                "status": status,
-                "decision": decision,
-                "failed_gates": failed_str,
-            }
-        )
+        summary_dict: dict[str, Any] = {
+            "cycle_id": cycle_id,
+            "strategy_name": strategy_name,
+            "git_commit": git_commit,
+            "dry_run": str(args.dry_run).lower(),
+            "oos_sharpe": f"{float(oos['sharpe']):.6f}",
+            "is_sharpe": f"{float(ins['sharpe']):.6f}",
+            "dsr_confidence": f"{float(dsr):.6f}" if dsr is not None else "n/a",
+            "oos_cagr": f"{float(oos['cagr']):.6f}",
+            "oos_max_drawdown": f"{float(oos['max_drawdown']):.6f}",
+            "annual_turnover": f"{float(oos['annual_turnover']):.6f}",
+            "effective_bets": f"{float(attrib['avg_effective_bets']):.3f}" if "avg_effective_bets" in attrib else "n/a",
+            "avg_cash_weight": f"{float(attrib['avg_cash_weight']):.4f}" if "avg_cash_weight" in attrib else "n/a",
+            "param_count": complexity["param_count"],
+            "sloc": complexity["sloc"],
+            "branch_count": complexity["branch_count"],
+            "runtime_sec": f"{runtime_sec:.3f}",
+            "status": status,
+            "decision": decision,
+            "failed_gates": failed_str,
+        }
+        print_summary_block(summary_dict)
+        if trace.get("summary_lines"):
+            print("reasoning_trace:")
+            for line in trace["summary_lines"]:
+                print(f"  - {line}")
         return 0
 
     except Exception as exc:  # noqa: BLE001

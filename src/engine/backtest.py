@@ -37,13 +37,94 @@ def validate_weights(weights: pd.DataFrame, policy: RiskPolicy) -> None:
         )
 
 
+def _norm_cdf(x: float) -> float:
+    return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
+
+
+def _norm_ppf_approx(p: float) -> float:
+    """Acklam-free rational approximation for standard normal quantile (p in (0, 1))."""
+    p_clamped = min(max(p, 1e-12), 1.0 - 1e-12)
+    # Beasley-Springer-Moro approximation (accurate to ~1e-7 across (1e-6, 1-1e-6))
+    a = (2.50662823884, -18.61500062529, 41.39119773534, -25.44106049637)
+    b = (-8.47351093090, 23.08336743743, -21.06224101826, 3.13082909833)
+    c = (
+        0.3374754822726147,
+        0.9761690190917186,
+        0.1607979714918209,
+        0.0276438810333863,
+        0.0038405729373609,
+        0.0003951896511919,
+        0.0000321767881768,
+        0.0000002888167364,
+        0.0000003960315187,
+    )
+    y = p_clamped - 0.5
+    if abs(y) < 0.42:
+        r = y * y
+        num = y * (((a[3] * r + a[2]) * r + a[1]) * r + a[0])
+        den = (((b[3] * r + b[2]) * r + b[1]) * r + b[0]) * r + 1.0
+        return num / den
+    r = p_clamped if y < 0 else (1.0 - p_clamped)
+    r = math.log(-math.log(r))
+    val = c[0]
+    for coeff in c[1:]:
+        val = val * r + coeff
+    return -val if y < 0 else val
+
+
+def compute_probabilistic_sharpe(
+    sharpe_annual: float,
+    *,
+    observations: int,
+    skewness: float = 0.0,
+    excess_kurtosis: float = 0.0,
+    benchmark_sharpe_annual: float = 0.0,
+) -> float:
+    """Probabilistic Sharpe Ratio (Bailey & Lopez de Prado): P(true SR > benchmark SR)."""
+    if observations < 3:
+        return 0.5
+    sr = sharpe_annual / math.sqrt(TRADING_DAYS_PER_YEAR)
+    sr0 = benchmark_sharpe_annual / math.sqrt(TRADING_DAYS_PER_YEAR)
+    denom_sq = 1.0 - skewness * sr + ((excess_kurtosis + 2.0) / 4.0) * (sr * sr)
+    denom = math.sqrt(max(denom_sq, 1e-12))
+    z = ((sr - sr0) * math.sqrt(observations - 1)) / denom
+    return round(_norm_cdf(z), 6)
+
+
+def compute_deflated_sharpe(
+    sharpe_annual: float,
+    *,
+    observations: int,
+    trial_count: int,
+    skewness: float = 0.0,
+    excess_kurtosis: float = 0.0,
+    sharpe_std_annual: float = 0.25,
+) -> float:
+    """Deflated Sharpe Ratio (Bailey & Lopez de Prado): PSR adjusted for multiple testing."""
+    n_trials = max(int(trial_count), 1)
+    if n_trials == 1:
+        sr0_annual = 0.0
+    else:
+        euler_gamma = 0.5772156649015329
+        z1 = _norm_ppf_approx(1.0 - 1.0 / n_trials)
+        z2 = _norm_ppf_approx(1.0 - 1.0 / (n_trials * math.e))
+        sr0_annual = sharpe_std_annual * ((1.0 - euler_gamma) * z1 + euler_gamma * z2)
+    return compute_probabilistic_sharpe(
+        sharpe_annual,
+        observations=observations,
+        skewness=skewness,
+        excess_kurtosis=excess_kurtosis,
+        benchmark_sharpe_annual=sr0_annual,
+    )
+
+
 def summarize_returns(
     net_returns: pd.Series,
     daily_turnover: pd.Series,
     *,
     rebalance_events: int,
 ) -> dict[str, Any]:
-    """Compute annualized return, volatility, Sharpe, Sortino, max drawdown, Calmar, and turnover."""
+    """Compute annualized return, volatility, Sharpe, Sortino, max drawdown, Calmar, tail risk, and PSR."""
     r = net_returns.dropna().astype(float)
     if len(r) < 2:
         raise ValueError("At least 2 return observations are required to summarize performance.")
@@ -72,6 +153,20 @@ def summarize_returns(
     tail = r[r <= q05]
     cvar_95 = float(tail.mean()) if len(tail) > 0 else worst_day
 
+    skew = float(r.skew()) if len(r) >= 3 and std_daily > 0 else 0.0
+    ex_kurt = float(r.kurt()) if len(r) >= 4 and std_daily > 0 else 0.0
+    if not math.isfinite(skew):
+        skew = 0.0
+    if not math.isfinite(ex_kurt):
+        ex_kurt = 0.0
+    psr_vs_zero = compute_probabilistic_sharpe(
+        sharpe,
+        observations=len(r),
+        skewness=skew,
+        excess_kurtosis=ex_kurt,
+        benchmark_sharpe_annual=0.0,
+    )
+
     ann_turnover = float(daily_turnover.mean() * TRADING_DAYS_PER_YEAR)
     return {
         "start_date": r.index[0].strftime("%Y-%m-%d"),
@@ -86,8 +181,76 @@ def summarize_returns(
         "calmar": round(calmar, 6),
         "worst_day": round(worst_day, 6),
         "cvar_95_daily": round(cvar_95, 6),
+        "skewness": round(skew, 4),
+        "excess_kurtosis": round(ex_kurt, 4),
+        "psr_vs_zero": psr_vs_zero,
         "annual_turnover": round(ann_turnover, 6),
         "rebalance_events": int(rebalance_events),
+    }
+
+
+def compute_portfolio_attribution(
+    prices: pd.DataFrame,
+    effective_weights: pd.DataFrame,
+    net_returns: pd.Series,
+    *,
+    benchmark_ticker: str = "SPY",
+) -> dict[str, Any]:
+    """Compute interpretable exposure, diversification (effective bets), asset contribution, and SPY beta."""
+    idx = net_returns.index
+    w = effective_weights.reindex(index=idx, columns=prices.columns).fillna(0.0).astype(float)
+    asset_rets = prices.pct_change().fillna(0.0).reindex(index=idx, columns=prices.columns).fillna(0.0)
+
+    avg_weights = {col: round(float(w[col].mean()), 4) for col in prices.columns}
+    gross = w.abs().sum(axis=1)
+    avg_gross = float(gross.mean())
+    avg_cash = max(0.0, 1.0 - avg_gross)
+
+    # Effective number of bets = 1 / HHI across invested weights (computed per bar, then averaged).
+    w_arr = w.to_numpy(dtype=float)
+    row_sums = np.abs(w_arr).sum(axis=1, keepdims=True)
+    norm_w = np.divide(np.abs(w_arr), row_sums, out=np.zeros_like(w_arr), where=row_sums > 1e-12)
+    hhi = (norm_w**2).sum(axis=1)
+    eff_bets = np.divide(1.0, hhi, out=np.zeros_like(hhi), where=hhi > 1e-12)
+    avg_eff_bets = float(eff_bets.mean()) if len(eff_bets) > 0 else 0.0
+
+    # Annualized gross return contribution per asset: mean(w_i * r_i) * 252
+    contrib_df = w * asset_rets
+    contrib = {
+        col: round(float(contrib_df[col].mean() * TRADING_DAYS_PER_YEAR), 5)
+        for col in prices.columns
+    }
+    top_asset = max(contrib, key=contrib.get) if contrib else None
+    bottom_asset = min(contrib, key=contrib.get) if contrib else None
+
+    bench_corr = 0.0
+    bench_beta = 0.0
+    if benchmark_ticker in asset_rets.columns and len(net_returns) >= 5:
+        b = asset_rets[benchmark_ticker].to_numpy(dtype=float)
+        p = net_returns.to_numpy(dtype=float)
+        b_var = float(np.var(b, ddof=1))
+        p_std = float(np.std(p, ddof=1))
+        b_std = float(np.std(b, ddof=1))
+        if b_var > 1e-12 and p_std > 1e-12 and b_std > 1e-12:
+            cov = float(np.cov(p, b, ddof=1)[0, 1])
+            bench_beta = cov / b_var
+            bench_corr = cov / (p_std * b_std)
+
+    return {
+        "avg_weights": avg_weights,
+        "avg_gross_exposure": round(avg_gross, 4),
+        "avg_cash_weight": round(avg_cash, 4),
+        "avg_effective_bets": round(avg_eff_bets, 3),
+        "annualized_contribution": contrib,
+        "top_contributor": {"ticker": top_asset, "annualized_return": contrib[top_asset]}
+        if top_asset
+        else None,
+        "bottom_contributor": {"ticker": bottom_asset, "annualized_return": contrib[bottom_asset]}
+        if bottom_asset
+        else None,
+        "benchmark_ticker": benchmark_ticker,
+        "benchmark_correlation": round(bench_corr, 4),
+        "benchmark_beta": round(bench_beta, 4),
     }
 
 
@@ -152,9 +315,18 @@ def run_backtest(
     # Skip initial `lag` warm-up bars where no position can legally be held yet.
     net_series = pd.Series(net_rets, index=prices.index, name="net_return").iloc[lag:]
     to_series = pd.Series(turnovers, index=prices.index, name="turnover").iloc[lag:]
+    eff_w_trimmed = effective_w.iloc[lag:]
     metrics = summarize_returns(net_series, to_series, rebalance_events=rebalance_events)
+    attribution = compute_portfolio_attribution(
+        prices,
+        eff_w_trimmed,
+        net_series,
+        benchmark_ticker=policy.benchmark_ticker,
+    )
     return {
         "metrics": metrics,
         "net_returns": net_series,
         "turnover": to_series,
+        "effective_weights": eff_w_trimmed,
+        "attribution": attribution,
     }

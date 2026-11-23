@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import copy
 from collections.abc import Callable
 from typing import Any
 
 import numpy as np
 import pandas as pd
 
-from engine.backtest import run_backtest, summarize_returns
+from engine.backtest import compute_portfolio_attribution, run_backtest, summarize_returns
 from engine.policy import RiskPolicy
 
 StrategyFn = Callable[[pd.DataFrame, dict[str, Any]], pd.DataFrame]
@@ -21,12 +22,29 @@ def assert_no_lookahead(
     *,
     probe_offsets: tuple[int, ...] = (260, 520, 900),
 ) -> None:
-    """Prefix-invariance test: mutating future bars (> t) must not change weights on or before t."""
+    """Verify determinism, input immutability, prefix-truncation invariance, and future-shock invariance."""
+    prices_snapshot = prices.copy(deep=True)
+    params_snapshot = copy.deepcopy(params)
+
     full_w = strategy_fn(prices, params)
+    if not prices.equals(prices_snapshot):
+        raise AssertionError("INPUT MUTATION DETECTED: strategy mutated the `prices` DataFrame in-place.")
+    if params != params_snapshot:
+        raise AssertionError("INPUT MUTATION DETECTED: strategy mutated the `params` dict in-place.")
+
+    # Determinism check: a second call on identical inputs must return identical weights.
+    second_w = strategy_fn(prices, params)
+    lhs_det = full_w.reindex(index=prices.index, columns=prices.columns).fillna(0.0).to_numpy(dtype=float)
+    rhs_det = second_w.reindex(index=prices.index, columns=prices.columns).fillna(0.0).to_numpy(dtype=float)
+    if not np.allclose(lhs_det, rhs_det, atol=1e-12, rtol=0.0):
+        raise AssertionError("NONDETERMINISM DETECTED: repeated strategy calls produced different weights.")
+
     n = len(prices)
     for idx in probe_offsets:
         if idx >= n - 5:
             continue
+
+        # 1) Prefix-truncation probe: removing future bars (> idx) must not alter weights <= idx.
         truncated = prices.iloc[: idx + 1].copy()
         trunc_w = strategy_fn(truncated, params)
         lhs = full_w.iloc[: idx + 1].reindex(index=truncated.index, columns=prices.columns).fillna(0.0)
@@ -35,6 +53,19 @@ def assert_no_lookahead(
             raise AssertionError(
                 f"LOOKAHEAD DETECTED at bar index {idx} ({prices.index[idx].strftime('%Y-%m-%d')}): "
                 "weights changed when future prices were removed."
+            )
+
+        # 2) Fixed-length future-shock probe: shocking prices strictly after idx must not alter weights <= idx.
+        shocked = prices.copy()
+        shocked.iloc[idx + 1 :] = shocked.iloc[idx + 1 :] * 1.5
+        shocked_w = strategy_fn(shocked, params)
+        rhs_shock = (
+            shocked_w.iloc[: idx + 1].reindex(index=truncated.index, columns=prices.columns).fillna(0.0)
+        )
+        if not np.allclose(lhs.to_numpy(dtype=float), rhs_shock.to_numpy(dtype=float), atol=1e-10, rtol=0.0):
+            raise AssertionError(
+                f"LOOKAHEAD DETECTED (future-shock) at bar index {idx} ({prices.index[idx].strftime('%Y-%m-%d')}): "
+                "weights changed when future prices were shocked."
             )
 
 
@@ -210,13 +241,31 @@ def evaluate_walk_forward(
     oos_to = pd.concat(oos_to_chunks).sort_index()
     oos_metrics = summarize_returns(oos_net, oos_to, rebalance_events=int((oos_to > 1e-4).sum()))
 
+    fold_sharpes = [float(f["sharpe"]) for f in fold_summaries]
+    fold_consistency = {
+        "min_fold_sharpe": round(min(fold_sharpes), 4),
+        "max_fold_sharpe": round(max(fold_sharpes), 4),
+        "median_fold_sharpe": round(float(np.median(fold_sharpes)), 4),
+        "std_fold_sharpe": round(float(np.std(fold_sharpes, ddof=1)) if len(fold_sharpes) > 1 else 0.0, 4),
+        "positive_fold_ratio": round(sum(1 for s in fold_sharpes if s > 0.0) / len(fold_sharpes), 4),
+        "worst_fold": min(fold_summaries, key=lambda f: float(f["sharpe"]))["fold"],
+        "best_fold": max(fold_summaries, key=lambda f: float(f["sharpe"]))["fold"],
+    }
+
     result: dict[str, Any] = {
         "in_sample": is_metrics,
         "out_of_sample": oos_metrics,
         "folds": fold_summaries,
         "fold_count": len(fold_summaries),
+        "fold_consistency": fold_consistency,
     }
     if include_diagnostics:
+        result["attribution"] = compute_portfolio_attribution(
+            dev_prices,
+            full_bt["effective_weights"],
+            oos_net,
+            benchmark_ticker=policy.benchmark_ticker,
+        )
         result["regime_breakdown"] = compute_regime_breakdown(oos_net, oos_to)
         result["cost_sensitivity"] = compute_cost_sensitivity(
             dev_prices,
