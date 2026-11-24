@@ -27,6 +27,16 @@ STRATEGY_NOTES: dict[str, str] = {
     "v007_erc_risk_parity": "True Equal Risk Contribution (ERC) solved on shrunk 126d covariance matrix.",
     "v008_downside_vol_inv_weight": "Inverse-risk weighting blending 60% downside semideviation and 40% total vol.",
     "v009_rate_regime_inv_vol": "Inverse-vol scaling down TLT when trailing 63d SPY-TLT correlation turns positive.",
+    "v010_dmn_sharpe_opt": "DMN (arXiv:1904.04912): direct Sharpe-ratio optimization over multi-horizon vol-scaled trends.",
+    "v011_momentum_transformer_cpd": "Momentum Transformer + CPD (arXiv:2112.08534): 4-horizon attention dampened by changepoint severity.",
+    "v012_drl_vol_scaled_policy": "DRL Trading (arXiv:1911.10107): causal online policy-gradient agent on vol-scaled net rewards.",
+    "v013_sdf_macro_factor": "Deep Asset Pricing / SDF (arXiv:1904.00745): macro-state conditioned regularized GMM SDF tilts.",
+    "v014_stat_arb_residual_mr": "Deep StatArb (arXiv:2106.04028): PCA-orthogonal residual multi-scale mean reversion + cost deadband.",
+    "v015_eiie_portfolio_rl": "EIIE Portfolio RL (arXiv:1706.10059): shared per-asset evaluator + prev-weight cost-remainder softmax.",
+    "v016_mm_deeplob_inventory": "MM-RL + DeepLOB (arXiv:1804.04216 / 1808.03668): multi-scale inception pressure + inventory dampening.",
+    "v017_news_underreaction_pead": "LLM News Sentiment proxy (arXiv:2304.07619): decaying post-shock underreaction drift tilts.",
+    "v018_trading_agents_debate": "TradingAgents (arXiv:2412.20138): 4-role debate (trend, MR, macro, risk-manager disagreement veto).",
+    "v019_qlib_factor_ensemble": "Qlib workflow (arXiv:2009.11189): causal rolling-Sharpe softmax ensemble over 4 risk-parity models.",
 }
 
 
