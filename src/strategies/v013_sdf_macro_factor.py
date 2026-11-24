@@ -1,13 +1,13 @@
-"""Batch 2 / Cycle 13 (Paper #4 — Deep Learning in Asset Pricing / SDF, arXiv:1904.00745).
+"""Batch 2 / Cycle 13 (inspired by Deep Learning in Asset Pricing / SDF, arXiv:1904.00745).
 
-Adapts Chen, Pelger & Zhu (2019) to long-only daily ETFs:
-- Macro-state compression: computes causal macro-regime indicators from the universe itself
-  (equity-bond spread `SPY-TLT` 63d return, rate-volatility proxy `TLT` 21d vol, inflation proxy
-  `GLD-SHY` 63d return, and cross-asset dispersion).
-- Characteristic-conditioned SDF solver: solves a regularized no-arbitrage GMM pricing-error
-  objective (`w_sdf = (Sigma + lambda * I)^-1 @ mu_cond`) where expected returns `mu_cond` are
-  estimated causally from trailing macro-conditioned linear regressions, then maps the SDF
-  scores into smooth long-only capped weights blended with inverse-volatility.
+Stylized, paper-inspired adaptation on the 6-ETF daily universe (not an adversarial GAN/LSTM
+SDF reproduction of Chen, Pelger & Zhu, 2019):
+- ETF-derived macro proxies: constructs 4 causal state series from the 6 ETFs themselves
+  (`SPY-TLT` 63d return spread, `TLT` 21d vol, `GLD-SHY` 63d spread, and cross-asset dispersion)
+  rather than external macroeconomic panels.
+- Closed-form ridge SDF proxy: estimates conditional expected returns `mu_cond` via trailing OLS,
+  solves `w_sdf = (Sigma + lambda * I)^-1 @ mu_cond`, and blends the scores into
+  inverse-volatility weights.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ import pandas as pd
 from strategies.v001_inv_vol import _cap_and_normalize
 
 STRATEGY_NAME = "v013_sdf_macro_factor"
-STRATEGY_NOTE = "Deep Asset Pricing / SDF (arXiv:1904.00745): macro-state conditioned regularized GMM SDF tilts."
+STRATEGY_NOTE = "Deep Asset Pricing / SDF-inspired (arXiv:1904.00745): closed-form ridge SDF on ETF macro proxies."
 DEFAULT_PARAMS: dict[str, Any] = {
     "vol_window": 63,
     "train_window": 504,

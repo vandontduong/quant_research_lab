@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import json
-import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from engine.runner import read_ledger
+from engine.runner import get_short_git_commit, read_ledger
 from tools.complexity import analyze_strategy_complexity
 
 TSV_HEADER = (
@@ -27,16 +26,16 @@ STRATEGY_NOTES: dict[str, str] = {
     "v007_erc_risk_parity": "True Equal Risk Contribution (ERC) solved on shrunk 126d covariance matrix.",
     "v008_downside_vol_inv_weight": "Inverse-risk weighting blending 60% downside semideviation and 40% total vol.",
     "v009_rate_regime_inv_vol": "Inverse-vol scaling down TLT when trailing 63d SPY-TLT correlation turns positive.",
-    "v010_dmn_sharpe_opt": "DMN (arXiv:1904.04912): direct Sharpe-ratio optimization over multi-horizon vol-scaled trends.",
-    "v011_momentum_transformer_cpd": "Momentum Transformer + CPD (arXiv:2112.08534): 4-horizon attention dampened by changepoint severity.",
-    "v012_drl_vol_scaled_policy": "DRL Trading (arXiv:1911.10107): causal online policy-gradient agent on vol-scaled net rewards.",
-    "v013_sdf_macro_factor": "Deep Asset Pricing / SDF (arXiv:1904.00745): macro-state conditioned regularized GMM SDF tilts.",
-    "v014_stat_arb_residual_mr": "Deep StatArb (arXiv:2106.04028): PCA-orthogonal residual multi-scale mean reversion + cost deadband.",
-    "v015_eiie_portfolio_rl": "EIIE Portfolio RL (arXiv:1706.10059): shared per-asset evaluator + prev-weight cost-remainder softmax.",
-    "v016_mm_deeplob_inventory": "MM-RL + DeepLOB (arXiv:1804.04216 / 1808.03668): multi-scale inception pressure + inventory dampening.",
-    "v017_news_underreaction_pead": "LLM News Sentiment proxy (arXiv:2304.07619): decaying post-shock underreaction drift tilts.",
-    "v018_trading_agents_debate": "TradingAgents (arXiv:2412.20138): 4-role debate (trend, MR, macro, risk-manager disagreement veto).",
-    "v019_qlib_factor_ensemble": "Qlib workflow (arXiv:2009.11189): causal rolling-Sharpe softmax ensemble over 4 risk-parity models.",
+    "v010_dmn_sharpe_opt": "DMN-inspired (arXiv:1904.04912): stylized 4-feature Sharpe-ascent linear tilt on inv-vol (no neural net).",
+    "v011_momentum_transformer_cpd": "Momentum Transformer + CPD-inspired (arXiv:2112.08534): 4-horizon SNR softmax + mean-shift dampening.",
+    "v012_drl_vol_scaled_policy": "DRL Trading-inspired (arXiv:1911.10107): 3-feature online linear policy update (no deep RL).",
+    "v013_sdf_macro_factor": "Deep Asset Pricing / SDF-inspired (arXiv:1904.00745): closed-form ridge SDF on ETF macro proxies.",
+    "v014_stat_arb_residual_mr": "Deep StatArb-inspired (arXiv:2106.04028): 1-factor PCA residual 5/15/30d rules-based MR + deadband.",
+    "v015_eiie_portfolio_rl": "EIIE-inspired (arXiv:1706.10059): 4-feature shared linear scorer + prev-weight softmax (no deep RL).",
+    "v016_mm_deeplob_inventory": "MM-RL + DeepLOB-inspired (arXiv:1804.04216 / 1808.03668): 3/10/30d return filter + inventory dampening.",
+    "v017_news_underreaction_pead": "News-drift proxy (arXiv:2304.07619): decaying 3d return-shock proxy on inv-vol (no news text/LLM).",
+    "v018_trading_agents_debate": "TradingAgents-inspired (arXiv:2412.20138): 3-signal rules consensus + disagreement dampening (no LLMs).",
+    "v019_qlib_factor_ensemble": "Qlib-inspired (arXiv:2009.11189): rolling-Sharpe softmax ensemble over 4 risk-parity sleeves.",
 }
 
 
@@ -53,22 +52,6 @@ def get_strategy_note(record: dict[str, Any]) -> str:
         first_sentence = hyp.split(". ")[0].rstrip(".") + "."
         return _sanitize_tsv_field(first_sentence, max_len=110)
     return "Candidate strategy."
-
-
-def get_short_git_commit(root_dir: str | Path = ".") -> str:
-    """Return the 7-char short git commit hash, or 'unknown' outside a git repository."""
-    try:
-        proc = subprocess.run(
-            ["git", "rev-parse", "--short=7", "HEAD"],
-            cwd=str(root_dir),
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=5,
-        )
-        return proc.stdout.strip() or "unknown"
-    except (subprocess.SubprocessError, OSError):
-        return "unknown"
 
 
 def _sanitize_tsv_field(text: str, max_len: int = 120) -> str:
@@ -90,7 +73,8 @@ def _decision_to_status(decision: str) -> str:
 def format_tsv_row(record: dict[str, Any], *, root_dir: str | Path = ".") -> str:
     """Format a single ledger record into an autoresearch-style TSV row."""
     root = Path(root_dir)
-    commit = str(record.get("git_commit") or get_short_git_commit(root))
+    raw_commit = str(record.get("git_commit") or "").strip()
+    commit = _sanitize_tsv_field(raw_commit or "unknown", max_len=32)
     cycle_id = _sanitize_tsv_field(str(record.get("cycle_id", "unknown")), max_len=32)
     status = _decision_to_status(str(record.get("decision", "DISCARD")))
 

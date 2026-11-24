@@ -1,14 +1,13 @@
-"""Batch 3 / Cycle 18 (Paper #9 — TradingAgents Multi-Agent Debate, arXiv:2412.20138).
+"""Batch 3 / Cycle 18 (inspired by TradingAgents Multi-Agent Debate, arXiv:2412.20138).
 
-Deterministic offline adaptation of Xiao et al. (2024) to long-only daily ETFs:
-- Role 1 (Trend Analyst): proposes bull/bear thesis from 63d & 126d vol-scaled momentum.
-- Role 2 (Mean-Reversion Researcher): proposes opposing contrarian thesis from 21d RSI-like
-  standardized return extremes.
-- Role 3 (Macro Strategist): penalizes equity-bond co-crash exposure when trailing SPY-TLT
-  correlation is positive and favors defensive SHY/GLD when cross-asset vol spikes.
-- Role 4 (Risk Manager): reconciles the bull vs. bear debate via conviction-weighted consensus,
-  vetoes extreme tilts when disagreement (inter-agent variance) is high, and enforces
-  inverse-volatility risk budgeting + single-asset caps.
+Stylized, paper-inspired adaptation on the 6-ETF daily universe (deterministic rules-based
+analogue with no LLMs or agent prompts; Xiao et al., 2024):
+- Signal 1 (Trend score): 63d & 126d vol-scaled momentum.
+- Signal 2 (Mean-reversion score): opposing 21d standardized return z-score.
+- Signal 3 (Macro score): penalizes `SPY`/`TLT` when trailing correlation is positive and
+  favors `SHY`/`GLD` when cross-asset volatility spikes.
+- Consensus & disagreement dampening: combines the 3 rule scores and shrinks tilts when
+  inter-signal variance is high, keeping inverse-volatility risk budgeting as the anchor.
 """
 
 from __future__ import annotations
@@ -21,7 +20,7 @@ import pandas as pd
 from strategies.v001_inv_vol import _cap_and_normalize
 
 STRATEGY_NAME = "v018_trading_agents_debate"
-STRATEGY_NOTE = "TradingAgents (arXiv:2412.20138): 4-role debate (trend, MR, macro, risk-manager disagreement veto)."
+STRATEGY_NOTE = "TradingAgents-inspired (arXiv:2412.20138): 3-signal rules consensus + disagreement dampening (no LLMs)."
 DEFAULT_PARAMS: dict[str, Any] = {
     "vol_window": 63,
     "debate_tilt": 0.30,

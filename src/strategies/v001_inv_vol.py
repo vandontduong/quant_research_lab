@@ -20,6 +20,14 @@ DEFAULT_PARAMS: dict[str, Any] = {
     "min_vol_floor": 0.04,
     "max_weight": 0.45,
 }
+NEIGHBOR_PARAMS: list[dict[str, Any]] = [
+    {**DEFAULT_PARAMS, "vol_window": 42},
+    {**DEFAULT_PARAMS, "vol_window": 84},
+    {**DEFAULT_PARAMS, "rebalance_every_days": 15},
+    {**DEFAULT_PARAMS, "rebalance_every_days": 42},
+    {**DEFAULT_PARAMS, "min_vol_floor": 0.03},
+    {**DEFAULT_PARAMS, "max_weight": 0.40},
+]
 HYPOTHESIS = (
     "Replace static equal-weight with trailing 63-day inverse-volatility weighting "
     "(with 4% annualized vol floor and 45% target single-asset cap, trimmed if drift > 49.5%) "

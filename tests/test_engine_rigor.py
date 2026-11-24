@@ -113,6 +113,7 @@ def test_walk_forward_purge_gap_and_transaction_cost_drag():
         policy,
         is_metrics={"sharpe": 1.0},
         oos_metrics={"sharpe": 0.82, "max_drawdown": -0.15, "annual_turnover": 1.0, "rebalance_events": 40},
+        perturbation_drop=0.05,
         champion_oos_sharpe=0.80,
     )
     assert gate_fail["promote"] is False

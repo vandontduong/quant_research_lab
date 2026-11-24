@@ -1,13 +1,13 @@
-"""Batch 2 / Cycle 14 (Paper #5 — Deep Learning StatArb, arXiv:2106.04028).
+"""Batch 2 / Cycle 14 (inspired by Deep Learning StatArb, arXiv:2106.04028).
 
-Adapts Guijarro-Ordonez, Pelger & Zanotti (2021) to long-only daily ETFs:
-- Stage 1 (PCA Residual Extraction): extracts the leading latent market factor causally via SVD
-  on trailing `pca_window`-day standardized returns and forms orthogonal residual return paths.
-- Stage 2 (Multi-Scale Temporal Pattern Filter): applies convolutional-like multi-horizon
-  cumulative residual z-scores (5d, 15d, 30d) to detect short-term dislocations.
-- Stage 3 (Cost-Aware Policy): maps contrarian residual scores (`-z_resid`) into smooth tilts
-  on top of inverse-volatility weights, applying a turnover deadband (`trade_band`) so tiny
-  signals do not incur 5 bps/side transaction costs.
+Stylized, paper-inspired adaptation on the 6-ETF daily universe (not a CNN+Transformer
+equity-panel reproduction of Guijarro-Ordonez, Pelger & Zanotti, 2021):
+- Stage 1 (PCA Residual Extraction): extracts the leading 1-factor component causally via SVD
+  on trailing `pca_window`-day standardized ETF returns to form orthogonal residual paths.
+- Stage 2 (Multi-Scale Rules-Based Filter): averages 5d, 15d, and 30d standardized cumulative
+  residuals (simple statistical filter, no neural temporal network).
+- Stage 3 (Cost-Aware Tilt): applies contrarian residual tilts (`-z_resid`) onto
+  inverse-volatility weights with a turnover deadband (`trade_band`).
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ import pandas as pd
 from strategies.v001_inv_vol import _cap_and_normalize
 
 STRATEGY_NAME = "v014_stat_arb_residual_mr"
-STRATEGY_NOTE = "Deep StatArb (arXiv:2106.04028): PCA-orthogonal residual multi-scale mean reversion with cost deadband."
+STRATEGY_NOTE = "Deep StatArb-inspired (arXiv:2106.04028): 1-factor PCA residual 5/15/30d rules-based MR + deadband."
 DEFAULT_PARAMS: dict[str, Any] = {
     "vol_window": 63,
     "pca_window": 126,

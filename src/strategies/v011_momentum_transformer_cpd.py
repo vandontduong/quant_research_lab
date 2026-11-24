@@ -1,13 +1,12 @@
-"""Batch 1 / Cycle 11 (Paper #3 — Momentum Transformer + CPD, arXiv:2112.08534).
+"""Batch 1 / Cycle 11 (inspired by Momentum Transformer + CPD, arXiv:2112.08534).
 
-Adapts Wood, Giegerich, Roberts & Zohren (2021) to long-only daily ETFs:
-- Multi-timescale attention layer: computes softmax attention weights over 4 trend horizons
-  (21d, 63d, 126d, 252d) based on each horizon's trailing signal-to-noise (trend persistence),
-  preserving long-horizon context to avoid fast-reversion whipsaws.
-- Causal online Changepoint Detection (CPD): measures a standardized mean-shift severity
-  statistic comparing recent 21d return mean vs. prior 105d baseline (scaled by trailing vol).
-  When CPD severity spikes (regime break / choppy reversal), smoothly dampens the trend tilt
-  back toward defensive inverse-volatility weights.
+Stylized, paper-inspired adaptation on the 6-ETF daily universe (not a Transformer or GP-CPD
+reproduction of Wood, Giegerich, Roberts & Zohren, 2021):
+- Heuristic multi-timescale weighting: computes softmax weights over 4 trend horizons
+  (21d, 63d, 126d, 252d) from each horizon's trailing signal-to-noise ratio (no attention layers).
+- Causal mean-shift proxy: measures a standardized difference between 21d and longer-horizon
+  mean returns, smoothly dampening trend tilts back toward inverse-volatility weights when
+  the shift spikes.
 """
 
 from __future__ import annotations
@@ -20,7 +19,7 @@ import pandas as pd
 from strategies.v001_inv_vol import _cap_and_normalize
 
 STRATEGY_NAME = "v011_momentum_transformer_cpd"
-STRATEGY_NOTE = "Momentum Transformer + CPD (arXiv:2112.08534): attention over 4 trend horizons dampened by causal changepoint severity."
+STRATEGY_NOTE = "Momentum Transformer + CPD-inspired (arXiv:2112.08534): 4-horizon SNR softmax + mean-shift dampening."
 DEFAULT_PARAMS: dict[str, Any] = {
     "vol_window": 63,
     "cpd_short": 21,

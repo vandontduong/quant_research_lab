@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import xml.etree.ElementTree as ET
 from pathlib import Path
+
+import pytest
 
 from tools.analyze_experiments import (
     compute_experiment_summary,
@@ -12,8 +15,8 @@ from tools.analyze_experiments import (
     render_progress_svg,
 )
 from tools.complexity import analyze_strategy_complexity
-from tools.experiment_cli import run_experiment_cli
-from tools.results_tsv import TSV_HEADER, append_crash_record, sync_results_tsv
+from tools.experiment_cli import check_immutable_harness_clean, run_experiment_cli
+from tools.results_tsv import TSV_HEADER, append_crash_record, format_tsv_row, sync_results_tsv
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -195,3 +198,121 @@ def test_experiment_cli_dry_run_and_crash_handling(tmp_path, capsys):
     assert "decision:            CRASH" in crash_out
     assert (tmp_path / "experiments" / "ledger.jsonl").exists()
     assert (tmp_path / "experiments" / "results.tsv").exists()
+
+
+def test_format_tsv_row_uses_unknown_when_git_commit_missing(tmp_path):
+    strat_file = tmp_path / "strat.py"
+    strat_file.write_text("DEFAULT_PARAMS = {'x': 1}\ndef generate_weights(p, d): return p\n", encoding="utf-8")
+
+    # Even when root_dir is the real git repo, a row without git_commit must not stamp current HEAD.
+    row_missing = {
+        "cycle_id": "cycle_000",
+        "strategy_name": "v000_base",
+        "strategy_file": str(strat_file),
+        "params": {"x": 1},
+        "hypothesis": "Missing commit field",
+        "out_of_sample": {"sharpe": 0.90, "max_drawdown": -0.15, "annual_turnover": 0.2},
+        "decision": "PROMOTE",
+    }
+    row_empty = {**row_missing, "git_commit": ""}
+    assert format_tsv_row(row_missing, root_dir=ROOT).split("\t")[0] == "unknown"
+    assert format_tsv_row(row_empty, root_dir=ROOT).split("\t")[0] == "unknown"
+
+
+def test_check_immutable_harness_clean_watches_data_and_fails_closed(tmp_path, monkeypatch):
+    # Initialize an isolated git repo with tracked files under config/, src/engine/, and data/.
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, check=True)
+    for rel, content in [
+        ("config/risk_policy.json", "{}\n"),
+        ("src/engine/backtest.py", "# clean\n"),
+        ("data/etf_daily_total_return.csv", "date,SPY\n2020-01-02,100\n"),
+    ]:
+        p = tmp_path / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content, encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=tmp_path, check=True, capture_output=True)
+
+    assert check_immutable_harness_clean(tmp_path) == []
+
+    # Modifying data/ must be detected.
+    (tmp_path / "data" / "etf_daily_total_return.csv").write_text("tampered\n", encoding="utf-8")
+    dirty = check_immutable_harness_clean(tmp_path)
+    assert any("data/etf_daily_total_return.csv" in item for item in dirty)
+
+    # Git failure must fail closed (raise RuntimeError, not return []).
+    def _boom(*args, **kwargs):
+        raise subprocess.CalledProcessError(returncode=128, cmd=["git", "status"], stderr="not a git repo")
+
+    monkeypatch.setattr(subprocess, "run", _boom)
+    with pytest.raises(RuntimeError, match="Immutable harness git check failed"):
+        check_immutable_harness_clean(tmp_path)
+
+
+def test_cli_enforces_stop_after_consecutive_discards_with_override(tmp_path, monkeypatch, capsys):
+    cfg_dir = tmp_path / "config"
+    cfg_dir.mkdir(parents=True)
+    policy_raw = json.loads((ROOT / "config" / "risk_policy.json").read_text(encoding="utf-8"))
+    policy_raw["promotion"]["stop_after_consecutive_discards"] = 3
+    (cfg_dir / "risk_policy.json").write_text(json.dumps(policy_raw), encoding="utf-8")
+
+    exp_dir = tmp_path / "experiments"
+    exp_dir.mkdir(parents=True)
+    ledger_path = exp_dir / "ledger.jsonl"
+    discard_rows = [
+        {"cycle_id": f"cycle_{i:03d}", "decision": "DISCARD"}
+        for i in range(3)
+    ]
+    ledger_path.write_text("\n".join(json.dumps(r) for r in discard_rows) + "\n", encoding="utf-8")
+
+    strat_file = tmp_path / "strat.py"
+    strat_file.write_text(
+        "STRATEGY_NAME = 'v999_test'\n"
+        "DEFAULT_PARAMS = {'x': 1}\n"
+        "NEIGHBOR_PARAMS = [{'x': 2}]\n"
+        "def generate_weights(prices, params):\n"
+        "    return prices * 0.0\n",
+        encoding="utf-8",
+    )
+
+    # Without override, CLI must abort non-zero and NOT append to ledger.jsonl.
+    rc_blocked = run_experiment_cli(["--root", str(tmp_path), "--strategy", str(strat_file)])
+    err_out = capsys.readouterr().err
+    assert rc_blocked == 2
+    assert "stop_after_consecutive_discards=3" in err_out
+    assert len(ledger_path.read_text(encoding="utf-8").splitlines()) == 3
+
+    # With --allow-after-consecutive-discards, the guard passes and proceeds to run_cycle.
+    called = {}
+
+    def _fake_run_cycle(**kwargs):
+        called["cycle_id"] = kwargs["cycle_id"]
+        return {
+            "cycle_id": kwargs["cycle_id"],
+            "decision": "DISCARD",
+            "runtime_sec": 0.01,
+            "in_sample": {"sharpe": 0.5},
+            "out_of_sample": {"sharpe": 0.4, "cagr": 0.03, "max_drawdown": -0.1, "annual_turnover": 0.2},
+            "gates": {"failed_gates": ["beats_champion_margin"]},
+            "deflated_sharpe": 0.5,
+            "attribution": {},
+            "reasoning_trace": {"summary_lines": ["stub"]},
+        }
+
+    monkeypatch.setattr("tools.experiment_cli.run_cycle", _fake_run_cycle)
+    monkeypatch.setattr("tools.experiment_cli.sync_results_tsv", lambda *a, **kw: 4)
+
+    rc_allowed = run_experiment_cli(
+        [
+            "--root",
+            str(tmp_path),
+            "--strategy",
+            str(strat_file),
+            "--allow-after-consecutive-discards",
+        ]
+    )
+    capsys.readouterr()
+    assert rc_allowed == 0
+    assert called["cycle_id"] == "cycle_003"

@@ -1,12 +1,11 @@
-"""Batch 3 / Cycle 17 (Paper #7 — LLM News Sentiment / Underreaction Drift, arXiv:2304.07619).
+"""Batch 3 / Cycle 17 (inspired by LLM News Sentiment / Underreaction Drift, arXiv:2304.07619).
 
-Offline causal adaptation of Lopez-Lira & Tang (2023) to daily ETFs (no external news/LLM API):
-- Detects high-salience "news-shock" events causally via extreme standardized 3-day return
-  surprises (`|z_3d| > shock_threshold`), classifying them as positive (+1), negative (-1), or
-  neutral (0) sentiment events.
-- Accumulates an exponentially decaying post-event underreaction sentiment score (`decay`)
-  and tilts inverse-volatility weights smoothly toward positive-sentiment drift while reducing
-  exposure after negative shocks.
+Stylized, paper-inspired adaptation on the 6-ETF daily universe (no news text, no headlines,
+and no LLM API calls; Lopez-Lira & Tang, 2023):
+- Price-shock proxy: flags large causal 3-day standardized return moves (`|z_3d| > shock_threshold`)
+  as +1 / 0 / -1 event proxies in place of LLM headline sentiment scores.
+- Exponentially decays those return-shock indicators (`sentiment_decay`) to test post-shock
+  drift tilts on top of inverse-volatility weights.
 """
 
 from __future__ import annotations
@@ -19,7 +18,7 @@ import pandas as pd
 from strategies.v001_inv_vol import _cap_and_normalize
 
 STRATEGY_NAME = "v017_news_underreaction_pead"
-STRATEGY_NOTE = "LLM News Sentiment proxy (arXiv:2304.07619): decaying post-shock underreaction drift tilts on inv-vol."
+STRATEGY_NOTE = "News-drift proxy (arXiv:2304.07619): decaying 3d return-shock proxy on inv-vol (no news text/LLM)."
 DEFAULT_PARAMS: dict[str, Any] = {
     "vol_window": 63,
     "shock_threshold": 1.50,

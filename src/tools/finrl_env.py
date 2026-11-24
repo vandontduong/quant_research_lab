@@ -1,13 +1,14 @@
-"""Batch 4 (Paper #12 — FinRL Gym-Style Offline Market Environment, arXiv:2011.09607).
+"""Batch 4 (inspired by FinRL Gym-Style Offline Market Environment, arXiv:2011.09607).
 
-Zero-dependency Gym-style offline market environment (`QuantLabEnv`) implementing `reset()`
-and `step(action_weights)` over the frozen ETF price matrix with:
+Zero-dependency, FinRL-inspired Gym-style offline market environment (`QuantLabEnv`) — not
+the FinRL library itself and without Stable-Baselines3/Gymnasium dependencies. Implements
+`reset()` and `step(action_weights)` over the frozen ETF price matrix with:
 - Strict 1-bar execution lag and realistic weight-drift turnover accounting
 - Policy-enforced long-only / gross-leverage / single-asset weight caps
-- Configurable reward shaping from the literature:
-  * `net_return` (raw net log/simple return)
-  * `vol_scaled` (Paper #8 — DRL Trading, arXiv:1911.10107)
-  * `asym_inventory` (Paper #1 — Market Making RL, arXiv:1804.04216)
+- Configurable reward shaping options:
+  * `net_return` (raw net simple return)
+  * `vol_scaled` (inspired by arXiv:1911.10107)
+  * `asym_inventory` (inspired by arXiv:1804.04216)
 """
 
 from __future__ import annotations
