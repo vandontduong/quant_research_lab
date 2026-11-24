@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import subprocess
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -16,6 +17,33 @@ from engine.data_loader import load_frozen_prices
 from engine.policy import RiskPolicy, evaluate_gates, load_policy
 from engine.reasoning import format_reasoning_trace_markdown, generate_reasoning_trace
 from engine.validation import StrategyFn, evaluate_perturbation_stability, evaluate_walk_forward
+
+
+def get_short_git_commit(root_dir: str | Path = ".") -> str:
+    """Return the 7-char short git commit hash, or 'unknown' outside a git repository."""
+    try:
+        proc = subprocess.run(
+            ["git", "rev-parse", "--short=7", "HEAD"],
+            cwd=str(root_dir),
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=5,
+        )
+        return proc.stdout.strip() or "unknown"
+    except (subprocess.SubprocessError, OSError):
+        return "unknown"
+
+
+def count_trailing_consecutive_discards(rows: list[dict[str, Any]]) -> int:
+    """Count trailing consecutive non-keep (DISCARD/CRASH) decisions in a ledger."""
+    count = 0
+    for row in reversed(rows):
+        decision = str(row.get("decision", "DISCARD")).strip().upper()
+        if decision in {"PROMOTE", "KEEP"}:
+            break
+        count += 1
+    return count
 
 
 def _spy_benchmark_weights(prices: pd.DataFrame, params: dict[str, Any]) -> pd.DataFrame:
@@ -54,7 +82,11 @@ def run_cycle(
     is_baseline: bool = False,
     root_dir: str | Path = ".",
 ) -> dict[str, Any]:
-    """Execute one bounded research cycle on the development window and log to experiments/ledger.jsonl."""
+    """Execute one bounded research cycle on the development window and log to experiments/ledger.jsonl.
+
+    Note: `promotion.stop_after_consecutive_discards` is enforced at the CLI gate
+    (`tools.experiment_cli.run_experiment_cli`) so programmatic test calls to `run_cycle` remain usable.
+    """
     t0 = time.perf_counter()
     root = Path(root_dir)
     policy: RiskPolicy = load_policy(root / "config" / "risk_policy.json")
@@ -125,6 +157,7 @@ def run_cycle(
         "timestamp_utc": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "cycle_id": cycle_id,
         "trial_count": trial_count,
+        "git_commit": get_short_git_commit(root),
         "strategy_name": strategy_name,
         "strategy_file": str(strategy_file.relative_to(root)) if strategy_file.is_relative_to(root) else str(strategy_file),
         "params": params,

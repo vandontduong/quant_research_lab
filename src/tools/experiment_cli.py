@@ -1,7 +1,7 @@
 """Single-command experiment CLI inspired by karpathy/autoresearch.
 
 Runs a candidate strategy through quant_research_lab's purged walk-forward harness with:
-- Optional immutable-harness git check (config/risk_policy.json & src/engine/ untouched)
+- Optional immutable-harness git check (config/risk_policy.json, src/engine/, data/ untouched)
 - Wall-clock timeout enforcement
 - Automatic AST/parameter complexity audit (simplicity criterion)
 - Automatic CRASH logging & results.tsv syncing (when not --dry-run)
@@ -23,9 +23,14 @@ from typing import Any
 
 from engine.backtest import compute_deflated_sharpe
 from engine.data_loader import load_frozen_prices
-from engine.policy import evaluate_gates, load_policy
+from engine.policy import RiskPolicy, evaluate_gates, load_policy
 from engine.reasoning import generate_reasoning_trace
-from engine.runner import load_champion_metrics, read_ledger, run_cycle
+from engine.runner import (
+    count_trailing_consecutive_discards,
+    load_champion_metrics,
+    read_ledger,
+    run_cycle,
+)
 from engine.validation import evaluate_perturbation_stability, evaluate_walk_forward
 from tools.complexity import analyze_strategy_complexity
 from tools.results_tsv import append_crash_record, get_short_git_commit, sync_results_tsv
@@ -55,19 +60,44 @@ def wall_clock_timeout(seconds: int):
 
 
 def check_immutable_harness_clean(root_dir: Path) -> list[str]:
-    """Return any modified/untracked files under immutable paths (config/risk_policy.json, src/engine/)."""
+    """Return modified/untracked files under immutable paths (config/risk_policy.json, src/engine/, data/).
+
+    Fails closed by raising RuntimeError if git status cannot be verified.
+    """
     try:
         proc = subprocess.run(
-            ["git", "status", "--porcelain", "--", "config/risk_policy.json", "src/engine"],
+            ["git", "status", "--porcelain", "--", "config/risk_policy.json", "src/engine", "data"],
             cwd=str(root_dir),
             capture_output=True,
             text=True,
             check=True,
             timeout=5,
         )
-    except (subprocess.SubprocessError, OSError):
-        return []
+    except (subprocess.SubprocessError, OSError) as exc:
+        stderr = getattr(exc, "stderr", None)
+        detail = f" ({str(stderr).strip()})" if stderr else ""
+        raise RuntimeError(f"Immutable harness git check failed in {root_dir}: {exc}{detail}") from exc
     return [line.strip() for line in proc.stdout.splitlines() if line.strip()]
+
+
+def check_consecutive_discards_stop(
+    ledger_path: Path,
+    policy: RiskPolicy,
+    *,
+    allow_override: bool = False,
+) -> None:
+    """Abort with RuntimeError if trailing non-keep runs reached policy stop_after_consecutive_discards."""
+    if allow_override:
+        return
+    limit = int(policy.promotion.get("stop_after_consecutive_discards", 0))
+    if limit <= 0:
+        return
+    trailing = count_trailing_consecutive_discards(read_ledger(ledger_path))
+    if trailing >= limit:
+        raise RuntimeError(
+            f"Trailing consecutive non-keep runs ({trailing}) reached policy limit "
+            f"stop_after_consecutive_discards={limit}. Pass --allow-after-consecutive-discards to override."
+        )
 
 
 def load_strategy_module(strategy_file: Path) -> Any:
@@ -137,7 +167,12 @@ def run_experiment_cli(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--check-git-clean-harness",
         action="store_true",
-        help="Fail fast if config/risk_policy.json or src/engine/ has uncommitted git modifications.",
+        help="Fail fast if config/risk_policy.json, src/engine/, or data/ has uncommitted git modifications.",
+    )
+    parser.add_argument(
+        "--allow-after-consecutive-discards",
+        action="store_true",
+        help="Allow running a new non-dry-run experiment after reaching stop_after_consecutive_discards.",
     )
     args = parser.parse_args(argv)
 
@@ -146,13 +181,31 @@ def run_experiment_cli(argv: list[str] | None = None) -> int:
     strategy_path = strategy_path.resolve()
 
     if args.check_git_clean_harness:
-        dirty = check_immutable_harness_clean(root)
+        try:
+            dirty = check_immutable_harness_clean(root)
+        except RuntimeError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 2
         if dirty:
             print(f"ERROR: Immutable harness files modified: {dirty}", file=sys.stderr)
             return 2
 
     ledger_path = root / "experiments" / "ledger.jsonl"
     tsv_path = root / "experiments" / "results.tsv"
+
+    if not args.dry_run:
+        policy_path = root / "config" / "risk_policy.json"
+        if policy_path.exists():
+            try:
+                check_consecutive_discards_stop(
+                    ledger_path,
+                    load_policy(policy_path),
+                    allow_override=args.allow_after_consecutive_discards,
+                )
+            except RuntimeError as exc:
+                print(f"ERROR: {exc}", file=sys.stderr)
+                return 2
+
     cycle_id = args.cycle_id or _next_cycle_id(ledger_path)
     git_commit = get_short_git_commit(root)
 

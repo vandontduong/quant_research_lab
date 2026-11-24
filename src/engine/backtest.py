@@ -66,8 +66,8 @@ def _norm_ppf_approx(p: float) -> float:
         return num / den
     r = p_clamped if y < 0 else (1.0 - p_clamped)
     r = math.log(-math.log(r))
-    val = c[0]
-    for coeff in c[1:]:
+    val = c[-1]
+    for coeff in reversed(c[:-1]):
         val = val * r + coeff
     return -val if y < 0 else val
 
@@ -140,8 +140,7 @@ def summarize_returns(
     ann_vol = std_daily * math.sqrt(TRADING_DAYS_PER_YEAR)
     sharpe = (mean_daily / std_daily) * math.sqrt(TRADING_DAYS_PER_YEAR) if std_daily > 0 else 0.0
 
-    downside = r[r < 0.0]
-    downside_std = float(np.sqrt((downside**2).mean())) if len(downside) > 0 else 0.0
+    downside_std = float(np.sqrt(np.mean(np.minimum(r.to_numpy(dtype=float), 0.0) ** 2)))
     sortino = (mean_daily / downside_std) * math.sqrt(TRADING_DAYS_PER_YEAR) if downside_std > 0 else 0.0
 
     dd_series = wealth / wealth.cummax() - 1.0

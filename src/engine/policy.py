@@ -99,11 +99,18 @@ def evaluate_gates(
         "limit": max_deg,
     }
 
-    if perturbation_drop is not None:
-        max_pdrop = float(gates["max_perturbation_sharpe_drop"])
+    max_pdrop = float(gates["max_perturbation_sharpe_drop"])
+    if perturbation_drop is None:
         checks["perturbation_stability"] = {
-            "passed": perturbation_drop <= max_pdrop,
-            "actual": round(perturbation_drop, 6),
+            "passed": False,
+            "actual": None,
+            "limit": max_pdrop,
+        }
+    else:
+        pdrop_val = float(perturbation_drop)
+        checks["perturbation_stability"] = {
+            "passed": pdrop_val <= max_pdrop,
+            "actual": round(pdrop_val, 6),
             "limit": max_pdrop,
         }
 

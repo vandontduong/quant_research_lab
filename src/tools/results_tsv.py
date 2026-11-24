@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import json
-import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from engine.runner import read_ledger
+from engine.runner import get_short_git_commit, read_ledger
 from tools.complexity import analyze_strategy_complexity
 
 TSV_HEADER = (
@@ -55,22 +54,6 @@ def get_strategy_note(record: dict[str, Any]) -> str:
     return "Candidate strategy."
 
 
-def get_short_git_commit(root_dir: str | Path = ".") -> str:
-    """Return the 7-char short git commit hash, or 'unknown' outside a git repository."""
-    try:
-        proc = subprocess.run(
-            ["git", "rev-parse", "--short=7", "HEAD"],
-            cwd=str(root_dir),
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=5,
-        )
-        return proc.stdout.strip() or "unknown"
-    except (subprocess.SubprocessError, OSError):
-        return "unknown"
-
-
 def _sanitize_tsv_field(text: str, max_len: int = 120) -> str:
     cleaned = " ".join(str(text).replace("\t", " ").replace("\r", " ").replace("\n", " ").split())
     if len(cleaned) > max_len:
@@ -90,7 +73,8 @@ def _decision_to_status(decision: str) -> str:
 def format_tsv_row(record: dict[str, Any], *, root_dir: str | Path = ".") -> str:
     """Format a single ledger record into an autoresearch-style TSV row."""
     root = Path(root_dir)
-    commit = str(record.get("git_commit") or get_short_git_commit(root))
+    raw_commit = str(record.get("git_commit") or "").strip()
+    commit = _sanitize_tsv_field(raw_commit or "unknown", max_len=32)
     cycle_id = _sanitize_tsv_field(str(record.get("cycle_id", "unknown")), max_len=32)
     status = _decision_to_status(str(record.get("decision", "DISCARD")))
 
