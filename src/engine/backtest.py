@@ -123,8 +123,16 @@ def summarize_returns(
     daily_turnover: pd.Series,
     *,
     rebalance_events: int,
+    excess_returns: pd.Series | None = None,
 ) -> dict[str, Any]:
-    """Compute annualized return, volatility, Sharpe, Sortino, max drawdown, Calmar, tail risk, and PSR."""
+    """Compute annualized return, volatility, Sharpe, Sortino, max drawdown, Calmar, tail risk, and PSR.
+
+    When `excess_returns` is provided, `sharpe`, `sortino`, and `psr_vs_zero` are computed on the
+    excess-of-cash-proxy series while wealth-path metrics (CAGR, volatility, drawdown, tail risk,
+    `skewness` / `excess_kurtosis`) and `raw_sharpe` remain on total `net_returns`.
+    `excess_skewness` and `excess_series_kurtosis` are the skew and Fisher's excess kurtosis of
+    the Sharpe series (the excess-return series when provided, otherwise the total net series).
+    """
     r = net_returns.dropna().astype(float)
     if len(r) < 2:
         raise ValueError("At least 2 return observations are required to summarize performance.")
@@ -138,10 +146,7 @@ def summarize_returns(
     mean_daily = float(r.mean())
     std_daily = float(r.std(ddof=1))
     ann_vol = std_daily * math.sqrt(TRADING_DAYS_PER_YEAR)
-    sharpe = (mean_daily / std_daily) * math.sqrt(TRADING_DAYS_PER_YEAR) if std_daily > 0 else 0.0
-
-    downside_std = float(np.sqrt(np.mean(np.minimum(r.to_numpy(dtype=float), 0.0) ** 2)))
-    sortino = (mean_daily / downside_std) * math.sqrt(TRADING_DAYS_PER_YEAR) if downside_std > 0 else 0.0
+    raw_sharpe = (mean_daily / std_daily) * math.sqrt(TRADING_DAYS_PER_YEAR) if std_daily > 0 else 0.0
 
     dd_series = wealth / wealth.cummax() - 1.0
     max_dd = float(dd_series.min())
@@ -158,13 +163,44 @@ def summarize_returns(
         skew = 0.0
     if not math.isfinite(ex_kurt):
         ex_kurt = 0.0
-    psr_vs_zero = compute_probabilistic_sharpe(
-        sharpe,
-        observations=len(r),
-        skewness=skew,
-        excess_kurtosis=ex_kurt,
-        benchmark_sharpe_annual=0.0,
-    )
+
+    if excess_returns is not None:
+        ex = excess_returns.reindex(r.index).dropna().astype(float)
+        if len(ex) != len(r):
+            raise ValueError("excess_returns must align with net_returns without missing values.")
+        ex_mean = float(ex.mean())
+        ex_std = float(ex.std(ddof=1))
+        sharpe = (ex_mean / ex_std) * math.sqrt(TRADING_DAYS_PER_YEAR) if ex_std > 0 else 0.0
+        downside_std = float(np.sqrt(np.mean(np.minimum(ex.to_numpy(dtype=float), 0.0) ** 2)))
+        sortino = (ex_mean / downside_std) * math.sqrt(TRADING_DAYS_PER_YEAR) if downside_std > 0 else 0.0
+        ex_skew = float(ex.skew()) if len(ex) >= 3 and ex_std > 0 else 0.0
+        ex_kurt_psr = float(ex.kurt()) if len(ex) >= 4 and ex_std > 0 else 0.0
+        if not math.isfinite(ex_skew):
+            ex_skew = 0.0
+        if not math.isfinite(ex_kurt_psr):
+            ex_kurt_psr = 0.0
+        sharpe_skew = ex_skew
+        sharpe_ex_kurt = ex_kurt_psr
+        psr_vs_zero = compute_probabilistic_sharpe(
+            sharpe,
+            observations=len(ex),
+            skewness=ex_skew,
+            excess_kurtosis=ex_kurt_psr,
+            benchmark_sharpe_annual=0.0,
+        )
+    else:
+        sharpe = raw_sharpe
+        downside_std = float(np.sqrt(np.mean(np.minimum(r.to_numpy(dtype=float), 0.0) ** 2)))
+        sortino = (mean_daily / downside_std) * math.sqrt(TRADING_DAYS_PER_YEAR) if downside_std > 0 else 0.0
+        sharpe_skew = skew
+        sharpe_ex_kurt = ex_kurt
+        psr_vs_zero = compute_probabilistic_sharpe(
+            sharpe,
+            observations=len(r),
+            skewness=skew,
+            excess_kurtosis=ex_kurt,
+            benchmark_sharpe_annual=0.0,
+        )
 
     ann_turnover = float(daily_turnover.mean() * TRADING_DAYS_PER_YEAR)
     return {
@@ -175,6 +211,7 @@ def summarize_returns(
         "cagr": round(cagr, 6),
         "annual_volatility": round(ann_vol, 6),
         "sharpe": round(sharpe, 6),
+        "raw_sharpe": round(raw_sharpe, 6),
         "sortino": round(sortino, 6),
         "max_drawdown": round(max_dd, 6),
         "calmar": round(calmar, 6),
@@ -182,10 +219,29 @@ def summarize_returns(
         "cvar_95_daily": round(cvar_95, 6),
         "skewness": round(skew, 4),
         "excess_kurtosis": round(ex_kurt, 4),
+        "excess_skewness": round(sharpe_skew, 4),
+        "excess_series_kurtosis": round(sharpe_ex_kurt, 4),
         "psr_vs_zero": psr_vs_zero,
         "annual_turnover": round(ann_turnover, 6),
         "rebalance_events": int(rebalance_events),
     }
+
+
+def sharpe_series_moments(metrics: dict[str, Any]) -> tuple[float, float]:
+    """Return skew and Fisher's excess kurtosis of the series used to compute Sharpe.
+
+    Prefers `excess_skewness` / `excess_series_kurtosis` (excess-return moments when
+    cash-proxy Sharpe is enabled) and falls back to wealth-path `skewness` / `excess_kurtosis`.
+    """
+    skew = metrics.get("excess_skewness", metrics.get("skewness", 0.0))
+    kurt = metrics.get("excess_series_kurtosis", metrics.get("excess_kurtosis", 0.0))
+    skew_f = float(skew) if skew is not None else 0.0
+    kurt_f = float(kurt) if kurt is not None else 0.0
+    if not math.isfinite(skew_f):
+        skew_f = 0.0
+    if not math.isfinite(kurt_f):
+        kurt_f = 0.0
+    return skew_f, kurt_f
 
 
 def compute_portfolio_attribution(
@@ -284,6 +340,17 @@ def run_backtest(
     asset_returns = prices.pct_change().fillna(0.0)
     effective_w = aligned_w.shift(lag).fillna(0.0)
 
+    cash_ticker = policy.cash_proxy_ticker
+    use_cash_proxy = policy.sharpe_excess_of_cash_proxy and (cash_ticker is not None)
+    if use_cash_proxy and cash_ticker not in prices.columns:
+        raise ValueError(
+            f"Cash proxy ticker '{cash_ticker}' is required when sharpe_excess_of_cash_proxy=True "
+            "but is missing from prices."
+        )
+    cash_ret_arr = (
+        asset_returns[cash_ticker].to_numpy(dtype=float) if use_cash_proxy and cash_ticker is not None else None
+    )
+
     n_days, n_assets = asset_returns.shape
     ret_arr = asset_returns.to_numpy(dtype=float)
     w_arr = effective_w.to_numpy(dtype=float)
@@ -300,11 +367,17 @@ def run_backtest(
         if one_way_to > 1e-4:
             rebalance_events += 1
         turnovers[i] = one_way_to
-        gross_r = float(np.dot(w_target, ret_arr[i]))
+        asset_gross_r = float(np.dot(w_target, ret_arr[i]))
+        if cash_ret_arr is not None:
+            gross_exposure = float(np.abs(w_target).sum())
+            residual_cash = max(0.0, 1.0 - gross_exposure)
+            gross_r = asset_gross_r + residual_cash * float(cash_ret_arr[i])
+        else:
+            gross_r = asset_gross_r
         net_r = gross_r - (one_way_to * 2.0 * cost_rate)
         net_rets[i] = net_r
 
-        # Drift weights by day's asset returns to start of next bar.
+        # Drift weights by total portfolio gross return (including cash yield) to start of next bar.
         denom = 1.0 + gross_r
         if denom > 0:
             prev_drifted = (w_target * (1.0 + ret_arr[i])) / denom
@@ -314,8 +387,17 @@ def run_backtest(
     # Skip initial `lag` warm-up bars where no position can legally be held yet.
     net_series = pd.Series(net_rets, index=prices.index, name="net_return").iloc[lag:]
     to_series = pd.Series(turnovers, index=prices.index, name="turnover").iloc[lag:]
+    excess_series: pd.Series | None = None
+    if use_cash_proxy and cash_ticker is not None:
+        cash_series = asset_returns[cash_ticker].iloc[lag:]
+        excess_series = (net_series - cash_series).rename("excess_return")
     eff_w_trimmed = effective_w.iloc[lag:]
-    metrics = summarize_returns(net_series, to_series, rebalance_events=rebalance_events)
+    metrics = summarize_returns(
+        net_series,
+        to_series,
+        rebalance_events=rebalance_events,
+        excess_returns=excess_series,
+    )
     attribution = compute_portfolio_attribution(
         prices,
         eff_w_trimmed,
@@ -325,7 +407,9 @@ def run_backtest(
     return {
         "metrics": metrics,
         "net_returns": net_series,
+        "excess_returns": excess_series,
         "turnover": to_series,
         "effective_weights": eff_w_trimmed,
+        "terminal_drifted_weights": pd.Series(prev_drifted, index=prices.columns, dtype=float),
         "attribution": attribution,
     }

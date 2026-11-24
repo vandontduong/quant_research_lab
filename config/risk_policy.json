@@ -1,10 +1,11 @@
 {
-  "policy_version": "1.0.0",
+  "policy_version": "1.1.0",
   "research_only": true,
   "allow_live_execution": false,
   "universe": ["SPY", "QQQ", "IWM", "TLT", "GLD", "SHY"],
   "benchmark_ticker": "SPY",
   "cash_proxy_ticker": "SHY",
+  "sharpe_excess_of_cash_proxy": true,
   "data_basis": "total_return_auto_adjusted",
   "splits": {
     "development_start": "2005-01-03",
@@ -34,6 +35,7 @@
   "promotion": {
     "primary_objective": "oos_sharpe",
     "min_oos_sharpe_improvement": 0.05,
+    "min_deflated_sharpe": 0.5,
     "max_cycles_per_invocation": 3,
     "stop_after_consecutive_discards": 3
   }

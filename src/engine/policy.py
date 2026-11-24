@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -22,6 +23,17 @@ class RiskPolicy:
     @property
     def benchmark_ticker(self) -> str:
         return str(self.raw["benchmark_ticker"]).upper()
+
+    @property
+    def cash_proxy_ticker(self) -> str | None:
+        val = self.raw.get("cash_proxy_ticker")
+        if val is None or str(val).strip() == "":
+            return None
+        return str(val).upper()
+
+    @property
+    def sharpe_excess_of_cash_proxy(self) -> bool:
+        return bool(self.raw.get("sharpe_excess_of_cash_proxy", False))
 
     @property
     def splits(self) -> dict[str, Any]:
@@ -57,6 +69,7 @@ def evaluate_gates(
     is_metrics: dict[str, Any],
     oos_metrics: dict[str, Any],
     perturbation_drop: float | None = None,
+    deflated_sharpe: float | None = None,
     champion_oos_sharpe: float | None = None,
     is_baseline: bool = False,
 ) -> dict[str, Any]:
@@ -112,6 +125,21 @@ def evaluate_gates(
             "passed": pdrop_val <= max_pdrop,
             "actual": round(pdrop_val, 6),
             "limit": max_pdrop,
+        }
+
+    min_dsr = float(promo.get("min_deflated_sharpe", 0.50))
+    if deflated_sharpe is None or not math.isfinite(float(deflated_sharpe)):
+        checks["deflated_sharpe_below_min"] = {
+            "passed": False,
+            "actual": None,
+            "limit": min_dsr,
+        }
+    else:
+        dsr_val = float(deflated_sharpe)
+        checks["deflated_sharpe_below_min"] = {
+            "passed": dsr_val >= min_dsr,
+            "actual": round(dsr_val, 6),
+            "limit": min_dsr,
         }
 
     risk_passed = all(c["passed"] for c in checks.values())
