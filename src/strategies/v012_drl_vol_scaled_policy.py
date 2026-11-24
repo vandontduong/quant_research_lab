@@ -1,13 +1,14 @@
-"""Batch 1 / Cycle 12 (Paper #8 — Deep RL for Trading, arXiv:1911.10107).
+"""Batch 1 / Cycle 12 (inspired by Deep RL for Trading, arXiv:1911.10107).
 
-Adapts Zhang, Zohren & Roberts (2019) to long-only daily ETFs:
-- Causal online policy-gradient (REINFORCE / actor) agent with volatility-scaled,
-  transaction-cost-penalized trading rewards:
+Stylized, paper-inspired adaptation on the 6-ETF daily universe (not a deep RL reproduction
+of Zhang, Zohren & Roberts, 2019):
+- Lightweight online linear policy update (3-feature shared weight vector `theta`, no neural
+  network or replay buffer) trained on volatility-scaled, cost-penalized returns:
       R_t = (w_{t-1} · r_t) / sigma_{t-1} - cost_penalty * turnover_t
 - State features per asset: trailing 21d & 63d vol-scaled returns and trailing volatility ratio
   (21d vol / 63d vol).
-- Updates shared linear policy parameters `theta` strictly causally after each realized rebalance
-  period using advantage (reward minus exponentially weighted baseline reward) with L2 decay.
+- Updates `theta` strictly causally after each realized rebalance period using reward minus
+  an exponentially weighted baseline with L2 decay.
 """
 
 from __future__ import annotations
@@ -20,7 +21,7 @@ import pandas as pd
 from strategies.v001_inv_vol import _cap_and_normalize
 
 STRATEGY_NAME = "v012_drl_vol_scaled_policy"
-STRATEGY_NOTE = "DRL Trading (arXiv:1911.10107): causal online policy-gradient agent on vol-scaled, cost-penalized rewards."
+STRATEGY_NOTE = "DRL Trading-inspired (arXiv:1911.10107): 3-feature online linear policy update (no deep RL)."
 DEFAULT_PARAMS: dict[str, Any] = {
     "vol_window": 63,
     "fast_vol_window": 21,

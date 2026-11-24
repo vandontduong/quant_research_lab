@@ -1,12 +1,11 @@
-"""Batch 2 / Cycle 15 (Paper #10 — Deep RL Portfolio Management / EIIE, arXiv:1706.10059).
+"""Batch 2 / Cycle 15 (inspired by EIIE Portfolio RL, arXiv:1706.10059).
 
-Adapts Jiang, Xu & Liang (2017) to long-only daily ETFs:
-- Ensemble of Identical Independent Evaluators (EIIE): applies the exact same shared
-  evaluator parameter vector `phi` independently to each asset's trailing price-relative
-  and volatility feature tensor `[r_5d, r_21d, r_63d, inv_vol_z]`, plus a previous-weight
-  transaction-cost remainder channel (`prev_w`) that directly penalizes unnecessary churn.
-- Updates `phi` strictly causally via online policy ascent on realized net log-wealth
-  (after 5 bps/side transaction cost remainder factor).
+Stylized, paper-inspired adaptation on the 6-ETF daily universe (not a deep CNN/RNN EIIE
+reproduction of Jiang, Xu & Liang, 2017):
+- Shared linear per-asset scorer: applies a single 4-element parameter vector `phi` across
+  each ETF's causal feature vector `[r_5d, r_21d, r_63d, inv_vol_z]`, plus a previous-weight
+  churn-penalty channel (`prev_w`) before softmax allocation (no neural network).
+- Updates `phi` strictly causally via a lightweight online gradient step on realized net log-wealth.
 """
 
 from __future__ import annotations
@@ -19,7 +18,7 @@ import pandas as pd
 from strategies.v001_inv_vol import _cap_and_normalize
 
 STRATEGY_NAME = "v015_eiie_portfolio_rl"
-STRATEGY_NOTE = "EIIE Portfolio RL (arXiv:1706.10059): shared per-asset evaluator + prev-weight cost-remainder softmax."
+STRATEGY_NOTE = "EIIE-inspired (arXiv:1706.10059): 4-feature shared linear scorer + prev-weight softmax (no deep RL)."
 DEFAULT_PARAMS: dict[str, Any] = {
     "vol_window": 63,
     "prev_w_bias": 1.20,

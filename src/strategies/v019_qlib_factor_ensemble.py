@@ -1,12 +1,11 @@
-"""Batch 4 / Cycle 19 (Paper #11 — Qlib Platform: Expression Pipeline & Model Zoo Ensemble, arXiv:2009.11189).
+"""Batch 4 / Cycle 19 (inspired by Qlib Platform Workflow, arXiv:2009.11189).
 
-Adapts Yang et al. (2020) Qlib workflow into a strictly causal, zero-dependency strategy:
-- Expression/Feature Pipeline: computes a cached, normalized factor library per bar (inverse-vol,
-  correlation-penalized risk parity, downside-semivolatility, rate-regime correlation defense,
-  and CPD-dampened trend).
-- Rolling IC/Sharpe Model Zoo Ensembling: evaluates each sub-model's strictly causal trailing
-  realized Sharpe over `ensemble_window` bars and allocates softmax-weighted ensemble weights
-  across the sub-models, combining orthogonal risk/alpha sleeves without lookahead.
+Stylized, paper-inspired adaptation on the 6-ETF daily universe (standalone, zero-dependency
+NumPy/Pandas script rather than the Qlib platform; Yang et al., 2020):
+- Fixed 4-model sleeve: calls four existing causal risk-parity strategies (`v001`, `v004`,
+  `v008`, `v009`) rather than running Qlib's expression engine or ML model zoo.
+- Rolling-Sharpe softmax ensemble: allocates weights across the 4 sub-models from their
+  strictly causal trailing realized Sharpe over `ensemble_window` bars.
 """
 
 from __future__ import annotations
@@ -23,7 +22,7 @@ from strategies.v008_downside_vol_inv_weight import generate_weights as downside
 from strategies.v009_rate_regime_inv_vol import generate_weights as rate_regime_weights
 
 STRATEGY_NAME = "v019_qlib_factor_ensemble"
-STRATEGY_NOTE = "Qlib workflow (arXiv:2009.11189): causal rolling-Sharpe softmax ensemble over 4 risk-parity sub-models."
+STRATEGY_NOTE = "Qlib-inspired (arXiv:2009.11189): rolling-Sharpe softmax ensemble over 4 risk-parity sleeves."
 DEFAULT_PARAMS: dict[str, Any] = {
     "ensemble_window": 252,
     "softmax_temp": 1.50,

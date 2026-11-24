@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -21,7 +22,7 @@ from engine.validation import assert_no_lookahead, evaluate_walk_forward
 from strategies.v001_inv_vol import DEFAULT_PARAMS as V001_PARAMS
 from strategies.v001_inv_vol import generate_weights as v001_weights
 
-ROOT = __file__
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def _synthetic_prices(periods: int = 1200, start: str = "2005-01-03") -> pd.DataFrame:
@@ -143,7 +144,7 @@ def test_portfolio_attribution_accuracy_and_walk_forward_diagnostics():
     assert attrib["top_contributor"]["annualized_return"] > 0.10
 
     # End-to-end walk-forward diagnostics on synthetic multi-year data
-    policy = load_policy(ROOT.replace("tests/test_harness_robustness.py", "config/risk_policy.json"))
+    policy = load_policy(ROOT / "config" / "risk_policy.json")
     synth = _synthetic_prices(periods=2500, start="2005-01-03")
     res = evaluate_walk_forward(v001_weights, synth, V001_PARAMS, policy)
     assert "attribution" in res

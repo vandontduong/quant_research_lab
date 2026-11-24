@@ -1,12 +1,13 @@
-"""Batch 1 / Cycle 10 (Paper #2 — Deep Momentum Networks, arXiv:1904.04912).
+"""Batch 1 / Cycle 10 (inspired by Deep Momentum Networks, arXiv:1904.04912).
 
-Adapts Lim, Zohren & Roberts (2019) to long-only daily ETFs:
+Stylized, paper-inspired adaptation on the 6-ETF daily universe (not a full reproduction
+of the paper's neural-network architecture; Lim, Zohren & Roberts, 2019):
 - Computes causal multi-horizon volatility-scaled trend features (21d, 63d, 126d, 252d).
-- On each monthly rebalance bar `t`, optimizes feature weights `theta` directly on a
-  trailing realized Sharpe-ratio objective (via deterministic coordinate/gradient ascent
-  with L2 regularization on strictly past bars) instead of MSE return forecasting.
-- Maps the learned score through a bounded sigmoid/tanh sizing layer into volatility-scaled
-  long-only ETF weights (with defensive SHY absorbing unallocated risk budget).
+- On each monthly rebalance bar `t`, fits a 4-parameter linear feature weighting `theta`
+  via deterministic projected coordinate ascent on a trailing realized Sharpe-ratio objective
+  with L2 regularization (no deep sequence model).
+- Maps the linear score through `tanh` into volatility-scaled long-only ETF weights (with
+  defensive SHY absorbing unallocated risk budget).
 """
 
 from __future__ import annotations
@@ -19,7 +20,7 @@ import pandas as pd
 from strategies.v001_inv_vol import _cap_and_normalize
 
 STRATEGY_NAME = "v010_dmn_sharpe_opt"
-STRATEGY_NOTE = "DMN (arXiv:1904.04912): direct Sharpe-ratio optimization over multi-horizon vol-scaled trends."
+STRATEGY_NOTE = "DMN-inspired (arXiv:1904.04912): stylized 4-feature Sharpe-ascent linear tilt on inv-vol (no neural net)."
 DEFAULT_PARAMS: dict[str, Any] = {
     "vol_window": 63,
     "train_window": 504,

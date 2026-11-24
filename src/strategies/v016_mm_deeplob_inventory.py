@@ -1,13 +1,12 @@
-"""Batch 3 / Cycle 16 (Papers #1 & #6 — Market Making RL, arXiv:1804.04216 + DeepLOB, arXiv:1808.03668).
+"""Batch 3 / Cycle 16 (inspired by Market Making RL, arXiv:1804.04216 & DeepLOB, arXiv:1808.03668).
 
-Adapts Spooner et al. (2018) & Zhang, Zohren & Roberts (2019) to long-only daily ETFs:
-- DeepLOB-inspired multi-scale inception feature extractor: applies 3 parallel causal
-  temporal kernels (3d, 10d, 30d normalized return & volatility-compression imbalance) to
-  score short-to-medium-horizon directional pressure.
-- Market-Making RL asymmetrically dampened inventory control: treats deviations from the
-  inverse-volatility risk-parity anchor as "inventory risk" and applies an asymmetric
-  dampening penalty (stronger aversion to adding speculative weight when trailing volatility
-  is elevated or recent returns are negative, preventing unstable trend chasing).
+Stylized, paper-inspired adaptation on the 6-ETF daily universe (no limit-order-book data,
+no DeepLOB CNN-LSTM, and no RL training; Spooner et al., 2018; Zhang, Zohren & Roberts, 2019):
+- Multi-horizon daily return filter: averages 3d, 10d, and 30d vol-normalized return and
+  volatility-compression scores rather than ingesting order-book microstructure.
+- Asymmetric deviation penalty: treats deviations from the inverse-volatility anchor as
+  inventory risk and applies a hand-crafted dampening penalty when trailing volatility is
+  elevated or recent returns are negative.
 """
 
 from __future__ import annotations
@@ -20,7 +19,7 @@ import pandas as pd
 from strategies.v001_inv_vol import _cap_and_normalize
 
 STRATEGY_NAME = "v016_mm_deeplob_inventory"
-STRATEGY_NOTE = "MM-RL + DeepLOB (arXiv:1804.04216 / 1808.03668): multi-scale inception pressure with asymmetric inventory dampening."
+STRATEGY_NOTE = "MM-RL + DeepLOB-inspired (arXiv:1804.04216 / 1808.03668): 3/10/30d return filter + inventory dampening."
 DEFAULT_PARAMS: dict[str, Any] = {
     "vol_window": 63,
     "pressure_tilt": 0.25,

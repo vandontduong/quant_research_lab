@@ -1,4 +1,4 @@
-"""Algorithmic trading rigor tests for all 12 arXiv paper adaptations (Batches 1–4) and FinRL env."""
+"""Algorithmic trading rigor tests for stylized paper-inspired strategies (v010–v019) and QuantLabEnv."""
 
 from __future__ import annotations
 
