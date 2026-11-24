@@ -37,7 +37,10 @@ Use `--check-git-clean-harness` on `scripts/run_experiment.py` to fail fast if a
 
 ## Objective & Simplicity Criterion
 
-- **Primary objective:** Maximize purged walk-forward **out-of-sample net Sharpe** (`oos_sharpe`) on the development window (`2005-01-03` .. `2023-12-29`) by at least `+0.05` over the current champion, while passing all hard risk gates (drawdown, turnover, rebalance count, IS→OOS degradation, and perturbation stability).
+- **Primary objective:** Maximize purged walk-forward **out-of-sample excess Sharpe vs. `SHY`** (`oos_sharpe`, with residual cash earning `SHY`) on the development window (`2005-01-03` .. `2023-12-29`) by at least `+0.05` over the current champion, while passing all hard risk gates (drawdown, turnover, rebalance count, IS→OOS degradation, perturbation stability, and `min_deflated_sharpe >= 0.50`).
+- **Evaluation modes:**
+  - `fixed_param_causal_oos`: default for fixed-rule strategies (`generate_weights(prices, params)` only); runs one causal weight pass and slices into 21-day-purged test folds.
+  - `per_fold_purged_wf`: enabled automatically when a strategy module defines `fit_strategy(train_prices, params)` or `fit_params(train_prices, params)`; calls the fitter strictly on each fold's training window (`train_end + 21 <= test_start`) before causal test-fold weight generation.
 - **Simplicity criterion (from `autoresearch`):** All else being equal, simpler strategies generalize better and carry lower overfitting risk. Every run logs `param_count`, `sloc`, and `branch_count`. Prefer fewer parameters and cleaner logic over fragile multi-knob heuristics; a simplification that matches or improves `oos_sharpe` while cutting `param_count`/`sloc` is a strong win.
 
 ## Single-Command Experiment Loop

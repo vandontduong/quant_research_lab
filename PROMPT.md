@@ -12,9 +12,10 @@ Maintain a clean, modular structure:
 - `data/` — Frozen, versioned historical total-return (`auto_adjust=True`) market datasets with `manifest.json` recording exact tickers, date ranges, corporate-action basis, and file SHA-256 hashes so every cycle is 100% reproducible.
 - `src/engine/` — Deterministic backtesting & purged walk-forward evaluation harness:
   - Enforces **strict causality**: signal at close `t` executes with at least a 1-bar lag (`t -> t+1`), verified by an automated prefix-invariance (no-lookahead) test.
-  - Simulates realistic one-way turnover accounting for natural weight drift between rebalances, plus commission + slippage bps.
-  - Enforces a **locked final holdout window** (`holdout_start` onward) that is strictly excluded from the recursive loop to prevent multi-cycle OOS overfitting.
-  - Logs `trial_count` (multiple-testing tracker) and checks parameter-neighborhood stability (perturbation test).
+  - Simulates realistic one-way turnover accounting for natural weight drift between rebalances, residual cash earning `SHY`, plus commission + slippage bps.
+  - Supports both **fixed-parameter causal OOS** (`evaluation_mode="fixed_param_causal_oos"`, single causal pass sliced into 21-day-purged folds for fixed-rule strategies) and **per-fold purged walk-forward** (`evaluation_mode="per_fold_purged_wf"`, calling optional `fit_strategy`/`fit_params` strictly on each fold's training slice with the 21-day purge enforced).
+  - Enforces a **locked final holdout window** (`holdout_start` onward) that is strictly excluded from the recursive loop and requires explicit `--confirm-holdout-audit` opt-in.
+  - Logs `trial_count` (multiple-testing tracker), gates on `min_deflated_sharpe >= 0.50` (excess of `SHY`), and checks parameter-neighborhood stability (perturbation test).
 - `src/strategies/` — Candidate strategy implementations (`v000_baseline.py`, `v001_*.py`, `v002_*.py`, ...), each isolated, deterministic, and parameterized cleanly.
 - `experiments/ledger.jsonl` — Append-only JSONL log of every cycle: `cycle_id`, `trial_count`, `policy_sha256`, hypothesis, logic/parameter diff, runtime, in-sample metrics, purged walk-forward OOS metrics, benchmark comparison, gate pass/fail breakdown, failure modes, and `PROMOTE` / `DISCARD` decision.
 - `experiments/best_candidate/` — Snapshot of the single highest-scoring strategy that passed all validation and risk gates (`strategy.py`, `metrics.json`), plus a human-readable `MEMO.md` explaining what changed, why it beat the prior champion, and what weaknesses remain.

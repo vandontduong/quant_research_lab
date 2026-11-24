@@ -6,12 +6,13 @@ import json
 import math
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pytest
 
-from engine.backtest import _norm_ppf_approx, compute_deflated_sharpe, summarize_returns
+from engine.backtest import _norm_ppf_approx, compute_deflated_sharpe, run_backtest, summarize_returns
 from engine.data_loader import load_frozen_prices
-from engine.policy import evaluate_gates, load_policy
+from engine.policy import RiskPolicy, evaluate_gates, load_policy
 from engine.runner import run_cycle
 from engine.validation import evaluate_perturbation_stability, evaluate_walk_forward
 from strategies import v001_inv_vol
@@ -120,6 +121,7 @@ def test_evaluate_gates_fails_closed_when_perturbation_drop_missing():
         is_metrics=is_metrics,
         oos_metrics=oos_metrics,
         perturbation_drop=None,
+        deflated_sharpe=0.90,
         champion_oos_sharpe=0.95,
     )
     assert missing_res["promote"] is False
@@ -135,11 +137,124 @@ def test_evaluate_gates_fails_closed_when_perturbation_drop_missing():
         is_metrics=is_metrics,
         oos_metrics=oos_metrics,
         perturbation_drop=0.05,
+        deflated_sharpe=0.90,
         champion_oos_sharpe=0.95,
     )
     assert passing_res["promote"] is True
     assert passing_res["failed_gates"] == []
     assert passing_res["checks"]["perturbation_stability"]["passed"] is True
+    assert passing_res["checks"]["deflated_sharpe_below_min"]["passed"] is True
+
+
+def test_evaluate_gates_enforces_min_deflated_sharpe():
+    policy = load_policy(ROOT / "config" / "risk_policy.json")
+    is_metrics = {"sharpe": 1.0}
+    oos_metrics = {
+        "sharpe": 1.10,
+        "max_drawdown": -0.10,
+        "annual_turnover": 0.50,
+        "rebalance_events": 60,
+    }
+
+    none_dsr = evaluate_gates(
+        policy,
+        is_metrics=is_metrics,
+        oos_metrics=oos_metrics,
+        perturbation_drop=0.05,
+        deflated_sharpe=None,
+        champion_oos_sharpe=0.95,
+    )
+    assert none_dsr["promote"] is False
+    assert none_dsr["risk_passed"] is False
+    assert "deflated_sharpe_below_min" in none_dsr["failed_gates"]
+    assert none_dsr["checks"]["deflated_sharpe_below_min"]["actual"] is None
+
+    low_dsr = evaluate_gates(
+        policy,
+        is_metrics=is_metrics,
+        oos_metrics=oos_metrics,
+        perturbation_drop=0.05,
+        deflated_sharpe=0.49,
+        champion_oos_sharpe=0.95,
+    )
+    assert low_dsr["promote"] is False
+    assert low_dsr["risk_passed"] is False
+    assert "deflated_sharpe_below_min" in low_dsr["failed_gates"]
+
+    ok_dsr = evaluate_gates(
+        policy,
+        is_metrics=is_metrics,
+        oos_metrics=oos_metrics,
+        perturbation_drop=0.05,
+        deflated_sharpe=0.50,
+        champion_oos_sharpe=0.95,
+    )
+    assert ok_dsr["promote"] is True
+    assert ok_dsr["failed_gates"] == []
+
+
+def test_excess_of_shy_and_residual_cash_yield():
+    policy = load_policy(ROOT / "config" / "risk_policy.json")
+    dates = pd.bdate_range("2020-01-02", periods=10)
+    spy_rets = np.array([0.0, 0.01, 0.01, -0.005, 0.015, 0.008, -0.004, 0.012, 0.006, 0.009])
+    shy_rets = np.array([0.0, 0.002, 0.002, 0.001, 0.002, 0.001, 0.001, 0.002, 0.001, 0.002])
+    prices = pd.DataFrame(
+        {
+            "SPY": 100.0 * np.cumprod(1.0 + spy_rets),
+            "QQQ": 100.0 * np.cumprod(1.0 + spy_rets * 1.1),
+            "IWM": 100.0 * np.cumprod(1.0 + spy_rets * 0.9),
+            "TLT": 100.0 * np.cumprod(1.0 + shy_rets * 1.2),
+            "GLD": 100.0 * np.cumprod(1.0 + shy_rets * 0.8),
+            "SHY": 100.0 * np.cumprod(1.0 + shy_rets),
+        },
+        index=dates,
+    )
+
+    # (a) All-zero-weight (100% cash) strategy earns SHY daily returns and has ~0 excess Sharpe.
+    zero_w = pd.DataFrame(0.0, index=dates, columns=prices.columns)
+    bt_cash = run_backtest(prices, zero_w, policy, enforce_single_asset_cap=False)
+    expected_shy = prices["SHY"].pct_change().iloc[1:]
+    assert np.allclose(bt_cash["net_returns"].to_numpy(), expected_shy.to_numpy(), atol=1e-12)
+    assert bt_cash["excess_returns"] is not None
+    assert bt_cash["metrics"]["sharpe"] == pytest.approx(0.0, abs=1e-9)
+    assert bt_cash["metrics"]["raw_sharpe"] > 0.0
+
+    # (b) Constant 50% SPY / 50% cash strategy: entry bar reflects 0.5*r_SPY + 0.5*r_SHY - entry_cost;
+    # zero-cost run matches exact cash-inclusive identity on every bar after lag.
+    half_w = pd.DataFrame(0.0, index=dates, columns=prices.columns)
+    half_w["SPY"] = 0.50
+    bt_half_nocost = run_backtest(
+        prices, half_w, policy, enforce_single_asset_cap=False, cost_multiplier=0.0
+    )
+    expected_half = 0.5 * prices["SPY"].pct_change().iloc[1:] + 0.5 * expected_shy
+    assert np.allclose(bt_half_nocost["net_returns"].to_numpy(), expected_half.to_numpy(), atol=1e-12)
+
+    bt_half = run_backtest(prices, half_w, policy, enforce_single_asset_cap=False)
+    base_bps = float(policy.execution["commission_bps_per_side"]) + float(
+        policy.execution["slippage_bps_per_side"]
+    )
+    cost_rate = base_bps / 10_000.0
+    # First traded bar (index 1, post-lag): one_way_to = 0.25, cost = 0.25 * 2 * cost_rate = 0.5 * cost_rate
+    assert bt_half["net_returns"].iloc[0] == pytest.approx(
+        expected_half.iloc[0] - 0.5 * cost_rate, abs=1e-12
+    )
+    # Subsequent bars stay very close to 0.5*r_SPY + 0.5*r_SHY (only tiny drift rebalance cost)
+    assert np.allclose(bt_half["net_returns"].iloc[1:].to_numpy(), expected_half.iloc[1:].to_numpy(), atol=1e-5)
+
+    # (c) Positive SHY mean return => excess Sharpe strictly less than raw_sharpe.
+    assert bt_half["metrics"]["sharpe"] < bt_half["metrics"]["raw_sharpe"]
+
+    # Missing cash_proxy_ticker fails closed when sharpe_excess_of_cash_proxy=True
+    with pytest.raises(ValueError, match="Cash proxy ticker 'SHY'"):
+        run_backtest(prices.drop(columns=["SHY"]), zero_w.drop(columns=["SHY"]), policy, enforce_single_asset_cap=False)
+
+    # Disabling flag reverts to raw net returns (cash earns 0.0, excess_returns=None)
+    raw_policy_dict = {**policy.raw, "sharpe_excess_of_cash_proxy": False}
+    raw_policy = RiskPolicy(raw=raw_policy_dict, sha256=policy.sha256, path=policy.path)
+    bt_raw = run_backtest(prices, zero_w, raw_policy, enforce_single_asset_cap=False)
+    assert bt_raw["excess_returns"] is None
+    assert np.allclose(bt_raw["net_returns"].to_numpy(), 0.0, atol=1e-12)
+    assert bt_raw["metrics"]["sharpe"] == bt_raw["metrics"]["raw_sharpe"]
 
 
 def test_run_cycle_records_git_commit_on_ledger_row(tmp_path):

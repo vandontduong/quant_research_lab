@@ -31,7 +31,7 @@ from engine.runner import (
     read_ledger,
     run_cycle,
 )
-from engine.validation import evaluate_perturbation_stability, evaluate_walk_forward
+from engine.validation import FitFn, evaluate_perturbation_stability, evaluate_walk_forward
 from tools.complexity import analyze_strategy_complexity
 from tools.results_tsv import append_crash_record, get_short_git_commit, sync_results_tsv
 
@@ -115,6 +115,15 @@ def load_strategy_module(strategy_file: Path) -> Any:
     if not hasattr(mod, "generate_weights"):
         raise AttributeError(f"Strategy module {resolved.name} must define `generate_weights(prices, params)`.")
     return mod
+
+
+def get_fit_fn(mod: Any) -> FitFn | None:
+    """Return optional per-fold parameter fitting hook (`fit_strategy` or `fit_params`) if callable."""
+    for attr in ("fit_strategy", "fit_params"):
+        fn = getattr(mod, attr, None)
+        if fn is not None and callable(fn):
+            return fn
+    return None
 
 
 def _next_cycle_id(ledger_path: Path) -> str:
@@ -226,6 +235,7 @@ def run_experiment_cli(argv: list[str] | None = None) -> int:
         params = base_params
         hypothesis = args.hypothesis or str(getattr(mod, "HYPOTHESIS", "No hypothesis provided."))
         neighbor_params = getattr(mod, "NEIGHBOR_PARAMS", None)
+        fit_fn = get_fit_fn(mod)
         complexity = analyze_strategy_complexity(strategy_path, params)
 
         with wall_clock_timeout(args.timeout_sec):
@@ -238,7 +248,14 @@ def run_experiment_cli(argv: list[str] | None = None) -> int:
                     end=policy.splits["development_end"],
                     verify_hash=True,
                 )
-                cand_eval = evaluate_walk_forward(mod.generate_weights, dev_prices, params, policy)
+                cand_eval = evaluate_walk_forward(
+                    mod.generate_weights,
+                    dev_prices,
+                    params,
+                    policy,
+                    fit_fn=fit_fn,
+                )
+                eval_mode = cand_eval["evaluation_mode"]
                 oos = cand_eval["out_of_sample"]
                 ins = cand_eval["in_sample"]
                 oos_sharpe = float(oos["sharpe"])
@@ -249,17 +266,10 @@ def run_experiment_cli(argv: list[str] | None = None) -> int:
                     neighbor_params or [],
                     policy,
                     oos_sharpe,
+                    fit_fn=fit_fn,
                 )
                 champ = load_champion_metrics(root / "experiments" / "best_candidate")
                 champ_sharpe = float(champ["out_of_sample"]["sharpe"]) if champ else None
-                gates = evaluate_gates(
-                    policy,
-                    is_metrics=ins,
-                    oos_metrics=oos,
-                    perturbation_drop=pdrop,
-                    champion_oos_sharpe=champ_sharpe,
-                    is_baseline=args.baseline,
-                )
                 trial_count = len(read_ledger(ledger_path)) + 1
                 dsr = compute_deflated_sharpe(
                     oos_sharpe,
@@ -268,6 +278,15 @@ def run_experiment_cli(argv: list[str] | None = None) -> int:
                     skewness=float(oos.get("skewness", 0.0)),
                     excess_kurtosis=float(oos.get("excess_kurtosis", 0.0)),
                 )
+                gates = evaluate_gates(
+                    policy,
+                    is_metrics=ins,
+                    oos_metrics=oos,
+                    perturbation_drop=pdrop,
+                    deflated_sharpe=dsr,
+                    champion_oos_sharpe=champ_sharpe,
+                    is_baseline=args.baseline,
+                )
                 decision = "PROMOTE" if gates["promote"] else "DISCARD"
                 runtime_sec = round(time.perf_counter() - t0, 3)
                 attrib = cand_eval.get("attribution") or {}
@@ -275,6 +294,7 @@ def run_experiment_cli(argv: list[str] | None = None) -> int:
                     "cycle_id": cycle_id,
                     "trial_count": trial_count,
                     "strategy_name": strategy_name,
+                    "evaluation_mode": eval_mode,
                     "in_sample": ins,
                     "out_of_sample": oos,
                     "deflated_sharpe": dsr,
@@ -287,6 +307,8 @@ def run_experiment_cli(argv: list[str] | None = None) -> int:
                     "gates": gates,
                     "decision": decision,
                 }
+                if "fitted_params_by_fold" in cand_eval:
+                    synthetic_record["fitted_params_by_fold"] = cand_eval["fitted_params_by_fold"]
                 trace = generate_reasoning_trace(
                     synthetic_record,
                     prior_champion=champ,
@@ -301,10 +323,12 @@ def run_experiment_cli(argv: list[str] | None = None) -> int:
                     params=params,
                     hypothesis=hypothesis,
                     neighbor_params_list=neighbor_params,
+                    fit_fn=fit_fn,
                     is_baseline=args.baseline,
                     root_dir=root,
                 )
                 sync_results_tsv(ledger_path, tsv_path, root_dir=root)
+                eval_mode = record.get("evaluation_mode", "fixed_param_causal_oos")
                 decision = record["decision"]
                 runtime_sec = record["runtime_sec"]
                 oos = record["out_of_sample"]
@@ -321,6 +345,7 @@ def run_experiment_cli(argv: list[str] | None = None) -> int:
         summary_dict: dict[str, Any] = {
             "cycle_id": cycle_id,
             "strategy_name": strategy_name,
+            "evaluation_mode": eval_mode,
             "git_commit": git_commit,
             "dry_run": str(args.dry_run).lower(),
             "oos_sharpe": f"{float(oos['sharpe']):.6f}",

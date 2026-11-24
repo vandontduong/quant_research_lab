@@ -12,11 +12,11 @@ from typing import Any
 
 import pandas as pd
 
-from engine.backtest import compute_deflated_sharpe
+from engine.backtest import compute_deflated_sharpe, run_backtest
 from engine.data_loader import load_frozen_prices
 from engine.policy import RiskPolicy, evaluate_gates, load_policy
 from engine.reasoning import format_reasoning_trace_markdown, generate_reasoning_trace
-from engine.validation import StrategyFn, evaluate_perturbation_stability, evaluate_walk_forward
+from engine.validation import FitFn, StrategyFn, evaluate_perturbation_stability, evaluate_walk_forward
 
 
 def get_short_git_commit(root_dir: str | Path = ".") -> str:
@@ -79,6 +79,7 @@ def run_cycle(
     params: dict[str, Any],
     hypothesis: str,
     neighbor_params_list: list[dict[str, Any]] | None = None,
+    fit_fn: FitFn | None = None,
     is_baseline: bool = False,
     root_dir: str | Path = ".",
 ) -> dict[str, Any]:
@@ -121,7 +122,13 @@ def run_cycle(
     )
 
     # Candidate evaluation
-    cand_eval = evaluate_walk_forward(strategy_fn, dev_prices, params, policy)
+    cand_eval = evaluate_walk_forward(
+        strategy_fn,
+        dev_prices,
+        params,
+        policy,
+        fit_fn=fit_fn,
+    )
     oos = cand_eval["out_of_sample"]
     base_oos_sharpe = float(oos["sharpe"])
     perturbation_drop = evaluate_perturbation_stability(
@@ -131,15 +138,7 @@ def run_cycle(
         neighbor_params_list or [],
         policy,
         base_oos_sharpe,
-    )
-
-    gate_result = evaluate_gates(
-        policy,
-        is_metrics=cand_eval["in_sample"],
-        oos_metrics=oos,
-        perturbation_drop=perturbation_drop,
-        champion_oos_sharpe=champion_oos_sharpe,
-        is_baseline=is_baseline,
+        fit_fn=fit_fn,
     )
 
     deflated_sharpe = compute_deflated_sharpe(
@@ -148,6 +147,16 @@ def run_cycle(
         trial_count=trial_count,
         skewness=float(oos.get("skewness", 0.0)),
         excess_kurtosis=float(oos.get("excess_kurtosis", 0.0)),
+    )
+
+    gate_result = evaluate_gates(
+        policy,
+        is_metrics=cand_eval["in_sample"],
+        oos_metrics=oos,
+        perturbation_drop=perturbation_drop,
+        deflated_sharpe=deflated_sharpe,
+        champion_oos_sharpe=champion_oos_sharpe,
+        is_baseline=is_baseline,
     )
 
     decision = "PROMOTE" if gate_result["promote"] else "DISCARD"
@@ -164,6 +173,9 @@ def run_cycle(
         "hypothesis": hypothesis,
         "policy_sha256": policy.sha256,
         "dataset_sha256": manifest["sha256"],
+        "evaluation_mode": cand_eval["evaluation_mode"],
+        "sharpe_excess_of_cash_proxy": policy.sharpe_excess_of_cash_proxy,
+        "cash_proxy_ticker": policy.cash_proxy_ticker,
         "runtime_sec": runtime_sec,
         "in_sample": cand_eval["in_sample"],
         "out_of_sample": oos,
@@ -179,6 +191,8 @@ def run_cycle(
         "gates": gate_result,
         "decision": decision,
     }
+    if "fitted_params_by_fold" in cand_eval:
+        record["fitted_params_by_fold"] = cand_eval["fitted_params_by_fold"]
     record["reasoning_trace"] = generate_reasoning_trace(record, prior_champion=champion)
 
     with ledger_path.open("a", encoding="utf-8") as fh:
@@ -206,11 +220,23 @@ def _write_champion_memo(
     oos = record["out_of_sample"]
     ins = record["in_sample"]
     bench = record["benchmark_oos"]
+    eval_mode = str(record.get("evaluation_mode", "fixed_param_causal_oos"))
+    cash_ticker = record.get("cash_proxy_ticker") or "SHY"
+    excess_enabled = bool(record.get("sharpe_excess_of_cash_proxy", False))
+    dsr_val = record.get("deflated_sharpe")
+    pdrop_val = record.get("perturbation_sharpe_drop")
     prior_line = (
         f"Prior champion: `{prior_champion['strategy_name']}` (OOS Sharpe `{prior_champion['out_of_sample']['sharpe']:.3f}`)"
         if prior_champion
         else "Prior champion: none (initial Cycle 0 baseline)"
     )
+    scoring_line = (
+        f"Excess of `{cash_ticker}` (residual cash earns `{cash_ticker}`; Sharpe/Sortino/PSR/DSR on excess returns)"
+        if excess_enabled
+        else "Raw net returns (residual cash earns 0.0%)"
+    )
+    sharpe_label = f"Sharpe (excess of {cash_ticker})" if excess_enabled else "Sharpe (net)"
+    sortino_label = f"Sortino (excess of {cash_ticker})" if excess_enabled else "Sortino"
 
     lines = [
         f"# Champion Memo — `{record['strategy_name']}` ({record['cycle_id']})",
@@ -218,9 +244,20 @@ def _write_champion_memo(
         f"- **Promoted at:** `{record['timestamp_utc']}` (trial #{record['trial_count']})",
         f"- **Policy SHA-256:** `{record['policy_sha256'][:16]}...` (verified immutable)",
         f"- **Dataset SHA-256:** `{record['dataset_sha256'][:16]}...` (development window only; holdout locked)",
+        f"- **Evaluation Mode:** `{eval_mode}`",
+        f"- **Scoring Convention:** {scoring_line}",
         f"- **{prior_line}**",
         f"- **Hypothesis:** {record['hypothesis']}",
         f"- **Parameters:** `{json.dumps(record['params'])}`",
+    ]
+    if dsr_val is not None:
+        lines.append(
+            f"- **Deflated Sharpe Ratio (DSR):** `{float(dsr_val):.4f}` (trial #{record['trial_count']}, {oos['observations']} OOS observations)"
+        )
+    if pdrop_val is not None:
+        lines.append(f"- **Perturbation Stability:** worst OOS Sharpe drop `{float(pdrop_val):.6f}`")
+
+    lines += [
         "",
         "## Purged Walk-Forward Out-of-Sample vs. SPY Benchmark (Net of 5 bps/side)",
         "",
@@ -228,8 +265,10 @@ def _write_champion_memo(
         "| --- | ---: | ---: | ---: |",
         f"| CAGR | {oos['cagr']*100:.2f}% | {ins['cagr']*100:.2f}% | {bench['cagr']*100:.2f}% |",
         f"| Volatility | {oos['annual_volatility']*100:.2f}% | {ins['annual_volatility']*100:.2f}% | {bench['annual_volatility']*100:.2f}% |",
-        f"| Sharpe (net) | {oos['sharpe']:.3f} | {ins['sharpe']:.3f} | {bench['sharpe']:.3f} |",
-        f"| Sortino | {oos['sortino']:.3f} | {ins['sortino']:.3f} | {bench['sortino']:.3f} |",
+        f"| {sharpe_label} | {oos['sharpe']:.3f} | {ins['sharpe']:.3f} | {bench['sharpe']:.3f} |",
+        f"| Raw Sharpe (total net) | {oos.get('raw_sharpe', oos['sharpe']):.3f} | {ins.get('raw_sharpe', ins['sharpe']):.3f} | {bench.get('raw_sharpe', bench['sharpe']):.3f} |",
+        f"| {sortino_label} | {oos['sortino']:.3f} | {ins['sortino']:.3f} | {bench['sortino']:.3f} |",
+        f"| Deflated Sharpe (N={record['trial_count']}) | {f'{float(dsr_val):.4f}' if dsr_val is not None else 'n/a'} | — | — |",
         f"| Max Drawdown | {oos['max_drawdown']*100:.2f}% | {ins['max_drawdown']*100:.2f}% | {bench['max_drawdown']*100:.2f}% |",
         f"| Calmar | {oos['calmar']:.3f} | {ins['calmar']:.3f} | {bench['calmar']:.3f} |",
         f"| Daily 95% CVaR | {oos.get('cvar_95_daily', 0.0)*100:.2f}% | {ins.get('cvar_95_daily', 0.0)*100:.2f}% | {bench.get('cvar_95_daily', 0.0)*100:.2f}% |",
@@ -311,3 +350,102 @@ def _write_champion_memo(
         "",
     ]
     memo_path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def run_holdout_audit(
+    *,
+    strategy_fn: StrategyFn,
+    params: dict[str, Any],
+    strategy_name: str,
+    root_dir: str | Path = ".",
+    output_path: Path | None = None,
+    confirm_holdout_audit: bool = False,
+    enforce_single_asset_cap: bool = True,
+) -> dict[str, Any]:
+    """Run a one-time sealed holdout audit ONLY when explicitly opted in via `confirm_holdout_audit=True`."""
+    if not confirm_holdout_audit:
+        raise PermissionError(
+            "Holdout window is locked (splits.holdout_locked=true). "
+            "Pass confirm_holdout_audit=True (or --confirm-holdout-audit) to run a one-time holdout audit."
+        )
+
+    root = Path(root_dir)
+    policy = load_policy(root / "config" / "risk_policy.json")
+    holdout_start = pd.Timestamp(policy.splits["holdout_start"])
+    full_prices, manifest = load_frozen_prices(
+        root / "data",
+        tickers=policy.universe,
+        verify_hash=True,
+    )
+    if full_prices.index[-1] < holdout_start:
+        raise ValueError(
+            f"Frozen dataset ends on {full_prices.index[-1].strftime('%Y-%m-%d')}, "
+            f"before holdout_start {holdout_start.strftime('%Y-%m-%d')}."
+        )
+
+    cand_weights = strategy_fn(full_prices, params)
+    bt_1x = run_backtest(
+        full_prices,
+        cand_weights,
+        policy,
+        enforce_single_asset_cap=enforce_single_asset_cap,
+        cost_multiplier=1.0,
+    )
+    bt_3x = run_backtest(
+        full_prices,
+        cand_weights,
+        policy,
+        enforce_single_asset_cap=enforce_single_asset_cap,
+        cost_multiplier=3.0,
+    )
+    bench_weights = _spy_benchmark_weights(full_prices, {"benchmark_ticker": policy.benchmark_ticker})
+    bench_1x = run_backtest(
+        full_prices,
+        bench_weights,
+        policy,
+        enforce_single_asset_cap=False,
+        cost_multiplier=1.0,
+    )
+
+    from engine.backtest import summarize_returns
+
+    def _slice_holdout(bt: dict[str, Any]) -> dict[str, Any]:
+        net_h = bt["net_returns"].loc[bt["net_returns"].index >= holdout_start]
+        to_h = bt["turnover"].loc[bt["turnover"].index >= holdout_start]
+        ex_h = (
+            bt["excess_returns"].loc[bt["excess_returns"].index >= holdout_start]
+            if bt["excess_returns"] is not None
+            else None
+        )
+        return summarize_returns(
+            net_h,
+            to_h,
+            rebalance_events=int((to_h > 1e-4).sum()),
+            excess_returns=ex_h,
+        )
+
+    cand_h_1x = _slice_holdout(bt_1x)
+    cand_h_3x = _slice_holdout(bt_3x)
+    bench_h_1x = _slice_holdout(bench_1x)
+    audit = {
+        "audited_at_utc": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "policy_sha256": policy.sha256,
+        "dataset_sha256": manifest["sha256"],
+        "holdout_window": {
+            "start": cand_h_1x["start_date"],
+            "end": cand_h_1x["end_date"],
+        },
+        "candidate": {
+            "name": strategy_name,
+            "holdout_1x": cand_h_1x,
+            "holdout_3x_sharpe": cand_h_3x["sharpe"],
+        },
+        "benchmark_spy": {
+            "name": f"{policy.benchmark_ticker}_buy_and_hold",
+            "holdout_1x": bench_h_1x,
+        },
+    }
+    if output_path is not None:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(json.dumps(audit, indent=2) + "\n", encoding="utf-8")
+    return audit

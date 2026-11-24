@@ -17,9 +17,12 @@ This repository runs a disciplined, autonomous **hypothesize → implement → t
    - **Determinism** (repeated calls produce identical weights),
    - **Input immutability** (`prices` and `params` are never mutated in-place),
    - **Prefix-truncation & fixed-length future-shock invariance** (no lookahead bias),
-   - **Next-bar execution (`signal_lag_bars = 1`)** with realistic weight-drift turnover and 5 bps/side transaction costs (1 bps commission + 4 bps slippage), plus 1×/2×/3× cost-sensitivity sweeps.
-3. **Purged Walk-Forward & Locked Holdout:** Candidates are evaluated strictly on expanding-train, 21-day-purged walk-forward folds inside the development window (`2005-01-03` to `2023-12-29`). The final holdout window (`2024-01-02` onward) is programmatically sealed from the optimization loop.
-4. **Hard Promotion Gates & Anti-Overfitting:** A candidate is promoted (`PROMOTE` / `keep`) to `experiments/best_candidate/` **only** if it improves purged walk-forward OOS net Sharpe by at least `+0.05` over the current champion **without** breaching any policy ceiling (max OOS drawdown `-25%`, max annual turnover `600%`, min `24` rebalance events, max IS→OOS Sharpe degradation `0.50`, max parameter-perturbation Sharpe drop `0.20`). Every run also tracks `trial_count` and computes the multiple-testing-adjusted **Deflated Sharpe Ratio (DSR)**.
+   - **Next-bar execution (`signal_lag_bars = 1`)** with realistic weight-drift turnover, residual cash earning `SHY`, and 5 bps/side transaction costs (1 bps commission + 4 bps slippage), plus 1×/2×/3× cost-sensitivity sweeps.
+3. **Purged Walk-Forward & Locked Holdout:** Candidates are evaluated strictly on expanding-train, 21-day-purged walk-forward folds inside the development window (`2005-01-03` to `2023-12-29`). Two explicit evaluation modes are tracked:
+   - **Fixed-parameter causal OOS (`evaluation_mode="fixed_param_causal_oos"`):** One causal weight pass across the development window, sliced into purged test folds (valid by prefix-invariance for fixed-rule strategies `v000`–`v019`).
+   - **Per-fold purged walk-forward (`evaluation_mode="per_fold_purged_wf"`):** When a strategy module defines `fit_strategy(train_prices, params)` or `fit_params(train_prices, params)`, the fitter is invoked per fold strictly on `[train_start:train_end]`, the 21-day purge gap is enforced (`train_end + 21 <= test_start`), and test-fold weights use only that fold's fitted parameters.
+   The final holdout window (`2024-01-02` onward) is programmatically sealed from the optimization loop and requires an explicit opt-in flag (`--confirm-holdout-audit`) to audit.
+4. **Hard Promotion Gates & Anti-Overfitting:** Under policy `v1.1.0` (Batch 2+), Sharpe, Sortino, PSR, and DSR are computed on **excess returns over `SHY`** (with residual cash earning `SHY`). A candidate is promoted (`PROMOTE` / `keep`) to `experiments/best_candidate/` **only** if it improves purged walk-forward OOS excess Sharpe by at least `+0.05` over the current champion **without** breaching any policy ceiling (max OOS drawdown `-25%`, max annual turnover `600%`, min `24` rebalance events, max IS→OOS Sharpe degradation `0.50`, max parameter-perturbation Sharpe drop `0.20`, and minimum Deflated Sharpe Ratio `0.50`). Every run also tracks `trial_count`.
 5. **Interpretable Outputs & Concise Reasoning Traces:** Every cycle (promoted, discarded, or crashed) is appended to `experiments/ledger.jsonl`, synced to the compact tab-separated ledger `experiments/results.tsv`, plotted on `experiments/progress.svg`, and summarized into a concise 5-line evidence-backed reasoning trace (`Verdict`, `Evidence`, `Drivers`, `Audit`, `Next`) in `experiments/reasoning_traces.md`.
 
 ---
@@ -36,6 +39,8 @@ The autonomous loop refines **long-only, daily-tracked multi-asset ETF portfolio
 ---
 
 ## Experiment History Ledger (`cycle_000` – `cycle_019`)
+
+> **Scoring convention note:** The historical `cycle_000`–`cycle_019` table below (and corresponding historical rows in `experiments/ledger.jsonl` and `experiments/results.tsv`) is preserved as originally recorded under policy `v1.0.0` (raw net Sharpe with 0% residual cash yield, `fixed_param_causal_oos`). Starting with Batch 2 (policy `v1.1.0`), new evaluations score Sharpe/Sortino/PSR/DSR **excess of `SHY`** (with residual cash earning `SHY`), gate on `min_deflated_sharpe >= 0.50`, and record `evaluation_mode` (`fixed_param_causal_oos` vs. `per_fold_purged_wf`).
 
 Development window: `2005-01-03` to `2023-12-29` (7 purged walk-forward OOS folds; `SPY` Buy & Hold OOS benchmark: Sharpe **`0.805`**, Max DD **`-33.72%`**, CAGR **`13.24%`**). Full machine-readable history lives in [`experiments/ledger.jsonl`](experiments/ledger.jsonl) and [`experiments/results.tsv`](experiments/results.tsv).
 
