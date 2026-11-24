@@ -1,5 +1,6 @@
 {
-  "timestamp_utc": "2026-11-24T06:31:30Z",
+  "timestamp_utc": "2026-11-23T18:07:15Z",
+  "metrics_refreshed_utc": "2026-11-24T08:01:38Z",
   "cycle_id": "cycle_001",
   "trial_count": 2,
   "strategy_name": "v001_inv_vol_monthly",
@@ -17,7 +18,6 @@
   "evaluation_mode": "fixed_param_causal_oos",
   "sharpe_excess_of_cash_proxy": true,
   "cash_proxy_ticker": "SHY",
-  "runtime_sec": 1.224,
   "in_sample": {
     "start_date": "2005-01-04",
     "end_date": "2010-01-04",
@@ -34,6 +34,8 @@
     "cvar_95_daily": -0.00902,
     "skewness": 0.1546,
     "excess_kurtosis": 2.5616,
+    "excess_skewness": 0.0774,
+    "excess_series_kurtosis": 2.9862,
     "psr_vs_zero": 0.825829,
     "annual_turnover": 0.486553,
     "rebalance_events": 60
@@ -54,12 +56,14 @@
     "cvar_95_daily": -0.00895,
     "skewness": -0.4352,
     "excess_kurtosis": 5.6537,
+    "excess_skewness": -0.5821,
+    "excess_series_kurtosis": 6.0182,
     "psr_vs_zero": 0.999583,
     "annual_turnover": 0.387368,
     "rebalance_events": 167
   },
-  "deflated_sharpe": 0.998004,
-  "deflated_sharpe_n20": 0.946528,
+  "deflated_sharpe": 0.997926,
+  "deflated_sharpe_n20": 0.945784,
   "fold_count": 7,
   "folds": [
     {
@@ -79,6 +83,8 @@
       "cvar_95_daily": -0.008289,
       "skewness": -0.0446,
       "excess_kurtosis": 1.0626,
+      "excess_skewness": -0.0805,
+      "excess_series_kurtosis": 0.9992,
       "psr_vs_zero": 0.984075,
       "annual_turnover": 0.299482,
       "rebalance_events": 24
@@ -100,6 +106,8 @@
       "cvar_95_daily": -0.007492,
       "skewness": -0.6119,
       "excess_kurtosis": 3.6726,
+      "excess_skewness": -0.6554,
+      "excess_series_kurtosis": 3.8257,
       "psr_vs_zero": 0.869385,
       "annual_turnover": 0.398119,
       "rebalance_events": 24
@@ -121,6 +129,8 @@
       "cvar_95_daily": -0.007107,
       "skewness": -0.3134,
       "excess_kurtosis": 1.5377,
+      "excess_skewness": -0.4143,
+      "excess_series_kurtosis": 1.6888,
       "psr_vs_zero": 0.777845,
       "annual_turnover": 0.392641,
       "rebalance_events": 24
@@ -142,6 +152,8 @@
       "cvar_95_daily": -0.006239,
       "skewness": -0.779,
       "excess_kurtosis": 4.1762,
+      "excess_skewness": -1.0607,
+      "excess_series_kurtosis": 5.961,
       "psr_vs_zero": 0.998196,
       "annual_turnover": 0.388716,
       "rebalance_events": 24
@@ -163,6 +175,8 @@
       "cvar_95_daily": -0.006315,
       "skewness": -0.4122,
       "excess_kurtosis": 1.5376,
+      "excess_skewness": -0.4656,
+      "excess_series_kurtosis": 2.1396,
       "psr_vs_zero": 0.921975,
       "annual_turnover": 0.568553,
       "rebalance_events": 24
@@ -184,6 +198,8 @@
       "cvar_95_daily": -0.013135,
       "skewness": -1.0371,
       "excess_kurtosis": 7.4756,
+      "excess_skewness": -1.1032,
+      "excess_series_kurtosis": 8.2819,
       "psr_vs_zero": 0.819208,
       "annual_turnover": 0.360905,
       "rebalance_events": 24
@@ -205,6 +221,8 @@
       "cvar_95_daily": -0.010708,
       "skewness": 0.2178,
       "excess_kurtosis": 2.3755,
+      "excess_skewness": 0.1008,
+      "excess_series_kurtosis": 1.5882,
       "psr_vs_zero": 0.614709,
       "annual_turnover": 0.298202,
       "rebalance_events": 23
@@ -328,11 +346,19 @@
     "cvar_95_daily": -0.026656,
     "skewness": -0.5099,
     "excess_kurtosis": 10.8128,
+    "excess_skewness": -0.5371,
+    "excess_series_kurtosis": 10.7202,
     "psr_vs_zero": 0.996772,
     "annual_turnover": 0.0,
     "rebalance_events": 0
   },
+  "benchmark_evaluation_mode": "fixed_param_causal_oos",
   "perturbation_sharpe_drop": 0.039365,
+  "dsr_moments": {
+    "skewness": -0.5821,
+    "excess_kurtosis": 6.0182,
+    "source": "excess_series"
+  },
   "gates": {
     "promote": true,
     "risk_passed": true,
@@ -367,7 +393,7 @@
       },
       "deflated_sharpe_below_min": {
         "passed": true,
-        "actual": 0.998004,
+        "actual": 0.997926,
         "limit": 0.5
       },
       "beats_champion_margin": {
@@ -380,13 +406,13 @@
   "decision": "PROMOTE",
   "reasoning_trace": {
     "verdict": "PROMOTE `v001_inv_vol_monthly`: OOS Sharpe 0.915 (+0.056 vs `v000_equal_weight_monthly`), all gates passed.",
-    "hypothesis_check": "vs `v000_equal_weight_monthly`: Sharpe +0.056, Max DD reduced (-16.2% vs -22.7%), turnover increased (39% vs 16%).",
+    "hypothesis_check": "vs `v000_equal_weight_monthly`: Sharpe +0.056, Max DD worsened (-16.2% vs 0.0%), turnover increased (39% vs 0%).",
     "performance_drivers": "Top contributor `QQQ` (+1.91%/yr), lagging `SHY` (+0.37%/yr). Diversification 4.14 eff. bets, avg cash 0.0%, SPY beta 0.28. Hardest stress regime `2022_rate_shock` (ret -12.2%, DD -15.4%). Fold Sharpe min/med/std=0.21/0.81/0.68 (100% positive).",
     "risk_and_overfit_audit": "IS\u2192OOS gap -0.495; perturbation drop +0.039; DSR(n=2)=99.8%; 3x-cost Sharpe drag 0.013.",
     "next_action_hint": "Target `2022_rate_shock` drawdown (-15.4%) using cross-asset correlation/rate-vol awareness without sacrificing bull-regime participation.",
     "summary_lines": [
       "Verdict: PROMOTE `v001_inv_vol_monthly`: OOS Sharpe 0.915 (+0.056 vs `v000_equal_weight_monthly`), all gates passed.",
-      "Evidence: vs `v000_equal_weight_monthly`: Sharpe +0.056, Max DD reduced (-16.2% vs -22.7%), turnover increased (39% vs 16%).",
+      "Evidence: vs `v000_equal_weight_monthly`: Sharpe +0.056, Max DD worsened (-16.2% vs 0.0%), turnover increased (39% vs 0%).",
       "Drivers: Top contributor `QQQ` (+1.91%/yr), lagging `SHY` (+0.37%/yr). Diversification 4.14 eff. bets, avg cash 0.0%, SPY beta 0.28. Hardest stress regime `2022_rate_shock` (ret -12.2%, DD -15.4%). Fold Sharpe min/med/std=0.21/0.81/0.68 (100% positive).",
       "Audit: IS\u2192OOS gap -0.495; perturbation drop +0.039; DSR(n=2)=99.8%; 3x-cost Sharpe drag 0.013.",
       "Next: Target `2022_rate_shock` drawdown (-15.4%) using cross-asset correlation/rate-vol awareness without sacrificing bull-regime participation."

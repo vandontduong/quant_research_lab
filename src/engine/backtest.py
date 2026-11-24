@@ -129,7 +129,9 @@ def summarize_returns(
 
     When `excess_returns` is provided, `sharpe`, `sortino`, and `psr_vs_zero` are computed on the
     excess-of-cash-proxy series while wealth-path metrics (CAGR, volatility, drawdown, tail risk,
-    skew/kurt) and `raw_sharpe` remain on total `net_returns`.
+    `skewness` / `excess_kurtosis`) and `raw_sharpe` remain on total `net_returns`.
+    `excess_skewness` and `excess_series_kurtosis` are the skew and Fisher's excess kurtosis of
+    the Sharpe series (the excess-return series when provided, otherwise the total net series).
     """
     r = net_returns.dropna().astype(float)
     if len(r) < 2:
@@ -177,6 +179,8 @@ def summarize_returns(
             ex_skew = 0.0
         if not math.isfinite(ex_kurt_psr):
             ex_kurt_psr = 0.0
+        sharpe_skew = ex_skew
+        sharpe_ex_kurt = ex_kurt_psr
         psr_vs_zero = compute_probabilistic_sharpe(
             sharpe,
             observations=len(ex),
@@ -188,6 +192,8 @@ def summarize_returns(
         sharpe = raw_sharpe
         downside_std = float(np.sqrt(np.mean(np.minimum(r.to_numpy(dtype=float), 0.0) ** 2)))
         sortino = (mean_daily / downside_std) * math.sqrt(TRADING_DAYS_PER_YEAR) if downside_std > 0 else 0.0
+        sharpe_skew = skew
+        sharpe_ex_kurt = ex_kurt
         psr_vs_zero = compute_probabilistic_sharpe(
             sharpe,
             observations=len(r),
@@ -213,10 +219,29 @@ def summarize_returns(
         "cvar_95_daily": round(cvar_95, 6),
         "skewness": round(skew, 4),
         "excess_kurtosis": round(ex_kurt, 4),
+        "excess_skewness": round(sharpe_skew, 4),
+        "excess_series_kurtosis": round(sharpe_ex_kurt, 4),
         "psr_vs_zero": psr_vs_zero,
         "annual_turnover": round(ann_turnover, 6),
         "rebalance_events": int(rebalance_events),
     }
+
+
+def sharpe_series_moments(metrics: dict[str, Any]) -> tuple[float, float]:
+    """Return skew and Fisher's excess kurtosis of the series used to compute Sharpe.
+
+    Prefers `excess_skewness` / `excess_series_kurtosis` (excess-return moments when
+    cash-proxy Sharpe is enabled) and falls back to wealth-path `skewness` / `excess_kurtosis`.
+    """
+    skew = metrics.get("excess_skewness", metrics.get("skewness", 0.0))
+    kurt = metrics.get("excess_series_kurtosis", metrics.get("excess_kurtosis", 0.0))
+    skew_f = float(skew) if skew is not None else 0.0
+    kurt_f = float(kurt) if kurt is not None else 0.0
+    if not math.isfinite(skew_f):
+        skew_f = 0.0
+    if not math.isfinite(kurt_f):
+        kurt_f = 0.0
+    return skew_f, kurt_f
 
 
 def compute_portfolio_attribution(
@@ -385,5 +410,6 @@ def run_backtest(
         "excess_returns": excess_series,
         "turnover": to_series,
         "effective_weights": eff_w_trimmed,
+        "terminal_drifted_weights": pd.Series(prev_drifted, index=prices.columns, dtype=float),
         "attribution": attribution,
     }

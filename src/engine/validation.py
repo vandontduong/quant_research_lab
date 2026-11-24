@@ -16,6 +16,48 @@ StrategyFn = Callable[[pd.DataFrame, dict[str, Any]], pd.DataFrame]
 FitFn = Callable[[pd.DataFrame, dict[str, Any]], dict[str, Any]]
 
 
+def _policy_cost_rate(policy: RiskPolicy, *, cost_multiplier: float = 1.0) -> float:
+    """Per-side cost rate used by `run_backtest` (`(commission + slippage) * multiplier / 10_000`)."""
+    base_bps = float(policy.execution["commission_bps_per_side"]) + float(policy.execution["slippage_bps_per_side"])
+    return (base_bps * float(cost_multiplier)) / 10_000.0
+
+
+def apply_cross_fold_switch_cost(
+    chunk_r: pd.Series,
+    chunk_to: pd.Series,
+    chunk_ex: pd.Series | None,
+    *,
+    new_weights: pd.Series,
+    prev_drifted: pd.Series,
+    cost_rate: float,
+) -> tuple[pd.Series, pd.Series, pd.Series | None]:
+    """Replace the first test-bar turnover with the cross-fold switch cost.
+
+    Each per-fold backtest is independent, so the first bar of fold k>1 only charges turnover
+    versus fold k's own prior drifted weights. This swaps that intra-fold charge for the
+    one-way turnover from fold k-1's terminal drifted weights to fold k's effective weights
+    on that bar, and adjusts net (and excess) return by `(new_to - old_to) * 2 * cost_rate`
+    to match `run_backtest`'s cost convention without double-counting.
+    """
+    chunk_r = chunk_r.copy()
+    chunk_to = chunk_to.copy()
+    chunk_ex = None if chunk_ex is None else chunk_ex.copy()
+    if len(chunk_r) == 0 or len(chunk_to) == 0:
+        return chunk_r, chunk_to, chunk_ex
+
+    cols = new_weights.index.union(prev_drifted.index)
+    w_new = new_weights.reindex(cols).fillna(0.0).to_numpy(dtype=float)
+    w_prev = prev_drifted.reindex(cols).fillna(0.0).to_numpy(dtype=float)
+    cross_to = float(np.abs(w_new - w_prev).sum()) * 0.5
+    old_to = float(chunk_to.iloc[0])
+    cost_adj = (cross_to - old_to) * 2.0 * float(cost_rate)
+    chunk_to.iloc[0] = cross_to
+    chunk_r.iloc[0] = float(chunk_r.iloc[0]) - cost_adj
+    if chunk_ex is not None and len(chunk_ex) > 0:
+        chunk_ex.iloc[0] = float(chunk_ex.iloc[0]) - cost_adj
+    return chunk_r, chunk_to, chunk_ex
+
+
 def _to_json_safe(value: Any) -> Any:
     """Convert fitted parameter objects into JSON-serializable primitives."""
     if value is None or isinstance(value, (bool, int, float, str)):
@@ -187,6 +229,8 @@ def compute_cost_sensitivity(
         chunks_ex: list[pd.Series] = []
 
         if per_fold_weights is not None:
+            prev_drifted: pd.Series | None = None
+            fold_cost_rate = _policy_cost_rate(policy, cost_multiplier=mult)
             for f, fold_w in zip(folds, per_fold_weights, strict=True):
                 prefix_prices = dev_prices.iloc[: f["test_end"]]
                 bt = run_backtest(
@@ -202,10 +246,25 @@ def compute_cost_sensitivity(
                 t_start_dt = dev_prices.index[f["test_start"]]
                 t_end_dt = dev_prices.index[f["test_end"] - 1]
                 mask = (net_f.index >= t_start_dt) & (net_f.index <= t_end_dt)
-                chunks_r.append(net_f.loc[mask])
-                chunks_to.append(to_f.loc[mask])
-                if ex_f is not None:
-                    chunks_ex.append(ex_f.loc[mask])
+                chunk_r = net_f.loc[mask].copy()
+                chunk_to = to_f.loc[mask].copy()
+                chunk_ex = ex_f.loc[mask].copy() if ex_f is not None else None
+                if prev_drifted is not None and len(chunk_r) > 0:
+                    eff_w = bt["effective_weights"]
+                    first_w = eff_w.loc[t_start_dt] if t_start_dt in eff_w.index else prev_drifted
+                    chunk_r, chunk_to, chunk_ex = apply_cross_fold_switch_cost(
+                        chunk_r,
+                        chunk_to,
+                        chunk_ex,
+                        new_weights=first_w,
+                        prev_drifted=prev_drifted,
+                        cost_rate=fold_cost_rate,
+                    )
+                chunks_r.append(chunk_r)
+                chunks_to.append(chunk_to)
+                if chunk_ex is not None:
+                    chunks_ex.append(chunk_ex)
+                prev_drifted = bt["terminal_drifted_weights"]
         else:
             assert weights_all is not None
             bt = run_backtest(
@@ -391,6 +450,8 @@ def evaluate_walk_forward(
     fold_summaries = []
     fitted_params_by_fold: list[dict[str, Any]] = []
     is_metrics: dict[str, Any] | None = None
+    prev_terminal_drifted: pd.Series | None = None
+    switch_cost_rate = _policy_cost_rate(policy, cost_multiplier=1.0)
 
     for fold_idx, f in enumerate(folds):
         tr_start = int(f["train_start"])
@@ -444,10 +505,21 @@ def evaluate_walk_forward(
         te_start_dt = dev_prices.index[te_start]
         te_end_dt = dev_prices.index[te_end - 1]
         te_mask = (net_f.index >= te_start_dt) & (net_f.index <= te_end_dt)
-        chunk_r = net_f.loc[te_mask]
-        chunk_to = to_f.loc[te_mask]
-        chunk_ex = ex_f.loc[te_mask] if ex_f is not None else None
-        chunk_w = eff_w_f.loc[(eff_w_f.index >= te_start_dt) & (eff_w_f.index <= te_end_dt)]
+        chunk_r = net_f.loc[te_mask].copy()
+        chunk_to = to_f.loc[te_mask].copy()
+        chunk_ex = ex_f.loc[te_mask].copy() if ex_f is not None else None
+        chunk_w = eff_w_f.loc[(eff_w_f.index >= te_start_dt) & (eff_w_f.index <= te_end_dt)].copy()
+
+        if fold_idx > 0 and prev_terminal_drifted is not None and len(chunk_r) > 0:
+            first_w = chunk_w.iloc[0] if len(chunk_w) > 0 else prev_terminal_drifted
+            chunk_r, chunk_to, chunk_ex = apply_cross_fold_switch_cost(
+                chunk_r,
+                chunk_to,
+                chunk_ex,
+                new_weights=first_w,
+                prev_drifted=prev_terminal_drifted,
+                cost_rate=switch_cost_rate,
+            )
 
         oos_net_chunks.append(chunk_r)
         oos_to_chunks.append(chunk_to)
@@ -484,6 +556,7 @@ def evaluate_walk_forward(
                 "fitted_params": fitted_summary,
             }
         )
+        prev_terminal_drifted = fold_bt["terminal_drifted_weights"]
 
     assert is_metrics is not None
     oos_net = pd.concat(oos_net_chunks).sort_index()

@@ -10,7 +10,13 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from engine.backtest import _norm_ppf_approx, compute_deflated_sharpe, run_backtest, summarize_returns
+from engine.backtest import (
+    _norm_ppf_approx,
+    compute_deflated_sharpe,
+    run_backtest,
+    sharpe_series_moments,
+    summarize_returns,
+)
 from engine.data_loader import load_frozen_prices
 from engine.policy import RiskPolicy, evaluate_gates, load_policy
 from engine.runner import run_cycle
@@ -70,6 +76,56 @@ def test_summarize_returns_sortino_full_sample_downside_deviation():
     metrics = summarize_returns(rets, turnover, rebalance_events=1)
     assert metrics["sortino"] == pytest.approx(round(expected_sortino, 6), abs=1e-6)
     assert metrics["sortino"] > metrics["sharpe"]
+
+
+def test_summarize_returns_exposes_excess_series_moments_for_dsr():
+    dates = pd.bdate_range("2020-01-02", periods=8)
+    # Wealth-path returns are left-skewed / peaked; excess series is right-skewed and milder.
+    net = pd.Series([0.02, 0.01, 0.03, -0.08, 0.01, 0.02, -0.06, 0.01], index=dates)
+    excess = pd.Series([-0.01, 0.00, -0.01, 0.05, 0.02, 0.03, 0.04, 0.01], index=dates)
+    turnover = pd.Series(0.0, index=dates)
+
+    with_excess = summarize_returns(net, turnover, rebalance_events=0, excess_returns=excess)
+    raw_only = summarize_returns(net, turnover, rebalance_events=0)
+
+    expected_ex_skew = round(float(excess.skew()), 4)
+    expected_ex_kurt = round(float(excess.kurt()), 4)
+    expected_raw_skew = round(float(net.skew()), 4)
+    expected_raw_kurt = round(float(net.kurt()), 4)
+
+    assert with_excess["skewness"] == pytest.approx(expected_raw_skew, abs=1e-4)
+    assert with_excess["excess_kurtosis"] == pytest.approx(expected_raw_kurt, abs=1e-4)
+    assert with_excess["excess_skewness"] == pytest.approx(expected_ex_skew, abs=1e-4)
+    assert with_excess["excess_series_kurtosis"] == pytest.approx(expected_ex_kurt, abs=1e-4)
+    assert with_excess["excess_skewness"] != with_excess["skewness"]
+    assert with_excess["excess_series_kurtosis"] != with_excess["excess_kurtosis"]
+
+    # When excess is off, Sharpe-series moments fall back to the wealth-path moments.
+    assert raw_only["excess_skewness"] == pytest.approx(raw_only["skewness"], abs=1e-12)
+    assert raw_only["excess_series_kurtosis"] == pytest.approx(raw_only["excess_kurtosis"], abs=1e-12)
+
+    ex_skew, ex_kurt = sharpe_series_moments(with_excess)
+    raw_skew, raw_kurt = sharpe_series_moments(raw_only)
+    assert ex_skew == pytest.approx(expected_ex_skew, abs=1e-4)
+    assert ex_kurt == pytest.approx(expected_ex_kurt, abs=1e-4)
+    assert raw_skew == pytest.approx(expected_raw_skew, abs=1e-4)
+    assert raw_kurt == pytest.approx(expected_raw_kurt, abs=1e-4)
+
+    dsr_ex = compute_deflated_sharpe(
+        with_excess["sharpe"],
+        observations=int(with_excess["observations"]),
+        trial_count=20,
+        skewness=ex_skew,
+        excess_kurtosis=ex_kurt,
+    )
+    dsr_raw_moments = compute_deflated_sharpe(
+        with_excess["sharpe"],
+        observations=int(with_excess["observations"]),
+        trial_count=20,
+        skewness=with_excess["skewness"],
+        excess_kurtosis=with_excess["excess_kurtosis"],
+    )
+    assert dsr_ex != dsr_raw_moments
 
 
 def test_v001_sortino_exceeds_sharpe_and_neighbor_perturbation_passes():

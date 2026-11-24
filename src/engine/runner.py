@@ -12,7 +12,7 @@ from typing import Any
 
 import pandas as pd
 
-from engine.backtest import compute_deflated_sharpe, run_backtest
+from engine.backtest import compute_deflated_sharpe, run_backtest, sharpe_series_moments
 from engine.data_loader import load_frozen_prices
 from engine.policy import RiskPolicy, evaluate_gates, load_policy
 from engine.reasoning import format_reasoning_trace_markdown, generate_reasoning_trace
@@ -141,12 +141,13 @@ def run_cycle(
         fit_fn=fit_fn,
     )
 
+    dsr_skew, dsr_ex_kurt = sharpe_series_moments(oos)
     deflated_sharpe = compute_deflated_sharpe(
         base_oos_sharpe,
         observations=int(oos["observations"]),
         trial_count=trial_count,
-        skewness=float(oos.get("skewness", 0.0)),
-        excess_kurtosis=float(oos.get("excess_kurtosis", 0.0)),
+        skewness=dsr_skew,
+        excess_kurtosis=dsr_ex_kurt,
     )
 
     gate_result = evaluate_gates(

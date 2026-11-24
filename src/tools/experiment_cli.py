@@ -21,7 +21,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-from engine.backtest import compute_deflated_sharpe
+from engine.backtest import compute_deflated_sharpe, sharpe_series_moments
 from engine.data_loader import load_frozen_prices
 from engine.policy import RiskPolicy, evaluate_gates, load_policy
 from engine.reasoning import generate_reasoning_trace
@@ -271,12 +271,13 @@ def run_experiment_cli(argv: list[str] | None = None) -> int:
                 champ = load_champion_metrics(root / "experiments" / "best_candidate")
                 champ_sharpe = float(champ["out_of_sample"]["sharpe"]) if champ else None
                 trial_count = len(read_ledger(ledger_path)) + 1
+                dsr_skew, dsr_ex_kurt = sharpe_series_moments(oos)
                 dsr = compute_deflated_sharpe(
                     oos_sharpe,
                     observations=int(oos["observations"]),
                     trial_count=trial_count,
-                    skewness=float(oos.get("skewness", 0.0)),
-                    excess_kurtosis=float(oos.get("excess_kurtosis", 0.0)),
+                    skewness=dsr_skew,
+                    excess_kurtosis=dsr_ex_kurt,
                 )
                 gates = evaluate_gates(
                     policy,

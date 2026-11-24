@@ -12,9 +12,15 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from engine.backtest import run_backtest
 from engine.policy import load_policy
 from engine.runner import run_holdout_audit
-from engine.validation import evaluate_perturbation_stability, evaluate_walk_forward
+from engine.validation import (
+    apply_cross_fold_switch_cost,
+    evaluate_perturbation_stability,
+    evaluate_walk_forward,
+    generate_walk_forward_folds,
+)
 from strategies import v000_baseline
 from tools.experiment_cli import run_experiment_cli
 
@@ -206,3 +212,105 @@ def test_holdout_audit_refuses_without_confirm_flag(tmp_path):
     assert proc.returncode != 0
     assert "Holdout window is locked" in proc.stderr
     assert not out_file.exists()
+
+
+def _fixed_sleeve_weights(df: pd.DataFrame, params: dict[str, Any]) -> pd.DataFrame:
+    w = pd.DataFrame(0.0, index=df.index, columns=df.columns)
+    w["SPY"] = float(params["spy_w"])
+    w["TLT"] = float(params["tlt_w"])
+    return w
+
+
+def test_per_fold_walk_forward_charges_fold_boundary_switch_cost():
+    policy = load_policy(ROOT / "config" / "risk_policy.json")
+    prices = _synthetic_dev_prices(periods=2600)
+    splits = policy.splits
+    folds = generate_walk_forward_folds(
+        prices.index,
+        train_days=int(splits["walk_forward_train_days"]),
+        purge_days=int(splits["walk_forward_purge_days"]),
+        test_days=int(splits["walk_forward_test_days"]),
+        step_days=int(splits["walk_forward_step_days"]),
+    )
+    assert len(folds) >= 2
+    cost_rate = (
+        float(policy.execution["commission_bps_per_side"]) + float(policy.execution["slippage_bps_per_side"])
+    ) / 10_000.0
+
+    def constant_fit(train_prices: pd.DataFrame, base_params: dict[str, Any]) -> dict[str, Any]:
+        return {**base_params, "spy_w": 0.45, "tlt_w": 0.05}
+
+    def switching_fit(train_prices: pd.DataFrame, base_params: dict[str, Any]) -> dict[str, Any]:
+        # Alternate a large SPY/TLT sleeve swap as the expanding train window grows.
+        odd = ((len(train_prices) // int(splits["walk_forward_step_days"])) % 2) == 1
+        return {
+            **base_params,
+            "spy_w": 0.05 if odd else 0.45,
+            "tlt_w": 0.45 if odd else 0.05,
+        }
+
+    def _first_switch_diagnostics(fit_fn):
+        bt0 = run_backtest(
+            prices.iloc[: folds[0]["test_end"]],
+            _fixed_sleeve_weights(prices.iloc[: folds[0]["test_end"]], fit_fn(prices.iloc[: folds[0]["train_end"]], {})),
+            policy,
+        )
+        fitted1 = fit_fn(prices.iloc[: folds[1]["train_end"]], {})
+        prefix1 = prices.iloc[: folds[1]["test_end"]]
+        bt1 = run_backtest(prefix1, _fixed_sleeve_weights(prefix1, fitted1), policy)
+        t_start = prices.index[folds[1]["test_start"]]
+        t_end = prices.index[folds[1]["test_end"] - 1]
+        mask = (bt1["net_returns"].index >= t_start) & (bt1["net_returns"].index <= t_end)
+        chunk_r = bt1["net_returns"].loc[mask].copy()
+        chunk_to = bt1["turnover"].loc[mask].copy()
+        chunk_ex = bt1["excess_returns"].loc[mask].copy() if bt1["excess_returns"] is not None else None
+        intra_to = float(chunk_to.iloc[0])
+        adj_r, adj_to, _ = apply_cross_fold_switch_cost(
+            chunk_r,
+            chunk_to,
+            chunk_ex,
+            new_weights=bt1["effective_weights"].loc[t_start],
+            prev_drifted=bt0["terminal_drifted_weights"],
+            cost_rate=cost_rate,
+        )
+        return intra_to, float(adj_to.iloc[0]), float(chunk_r.iloc[0]), float(adj_r.iloc[0])
+
+    intra_const, cross_const, raw_r_const, adj_r_const = _first_switch_diagnostics(constant_fit)
+    # Identical params across folds: cross-fold turnover equals the intra-fold charge, so no extra cost.
+    assert cross_const == pytest.approx(intra_const, abs=1e-12)
+    assert adj_r_const == pytest.approx(raw_r_const, abs=1e-12)
+
+    intra_sw, cross_sw, raw_r_sw, adj_r_sw = _first_switch_diagnostics(switching_fit)
+    assert cross_sw > intra_sw + 0.05
+    expected_adj = raw_r_sw - (cross_sw - intra_sw) * 2.0 * cost_rate
+    assert adj_r_sw == pytest.approx(expected_adj, abs=1e-12)
+    assert adj_r_sw < raw_r_sw
+
+    # Official evaluator must apply the same replacement cost (lower/equal OOS total return).
+    res_const = evaluate_walk_forward(
+        _fixed_sleeve_weights, prices, {}, policy, fit_fn=constant_fit, include_diagnostics=False
+    )
+    res_switch = evaluate_walk_forward(
+        _fixed_sleeve_weights, prices, {}, policy, fit_fn=switching_fit, include_diagnostics=False
+    )
+    assert res_const["evaluation_mode"] == "per_fold_purged_wf"
+    assert res_switch["evaluation_mode"] == "per_fold_purged_wf"
+    # Fold-2 total return in the switching case is reduced vs the unadjusted first-bar return path.
+    # Compare official fold-2 turnover against intra-only turnover: official must use the larger cross-fold value.
+    official_fold2_to = float(res_switch["folds"][1]["annual_turnover"])
+    # Reconstruct unadjusted vs adjusted fold-2 annual turnover.
+    fitted1 = switching_fit(prices.iloc[: folds[1]["train_end"]], {})
+    prefix1 = prices.iloc[: folds[1]["test_end"]]
+    bt1 = run_backtest(prefix1, _fixed_sleeve_weights(prefix1, fitted1), policy)
+    t_start = prices.index[folds[1]["test_start"]]
+    t_end = prices.index[folds[1]["test_end"] - 1]
+    mask = (bt1["turnover"].index >= t_start) & (bt1["turnover"].index <= t_end)
+    unadj_to = bt1["turnover"].loc[mask]
+    adj_to = unadj_to.copy()
+    adj_to.iloc[0] = cross_sw
+    unadj_ann = float(unadj_to.mean() * 252.0)
+    adj_ann = float(adj_to.mean() * 252.0)
+    assert official_fold2_to == pytest.approx(round(adj_ann, 6), abs=1e-6)
+    assert official_fold2_to > unadj_ann
+    assert res_switch["out_of_sample"]["total_return"] < res_const["out_of_sample"]["total_return"] + 1.0
+

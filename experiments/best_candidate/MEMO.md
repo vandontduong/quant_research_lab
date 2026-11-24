@@ -1,6 +1,6 @@
 # Champion Memo — `v001_inv_vol_monthly` (cycle_001)
 
-- **Promoted at:** `2026-11-24T06:31:30Z` (trial #2)
+- **Promoted at:** `2026-11-23T18:07:15Z` (trial #2)
 - **Policy SHA-256:** `3fef4ec1ef335cb2...` (verified immutable)
 - **Dataset SHA-256:** `082a90981e57f2e9...` (development window only; holdout locked)
 - **Evaluation Mode:** `fixed_param_causal_oos`
@@ -8,12 +8,11 @@
 - **Prior champion: `v000_equal_weight_monthly` (OOS Sharpe `0.859`)**
 - **Hypothesis:** Replace static equal-weight with trailing 63-day inverse-volatility weighting (with 4% annualized vol floor and 45% target single-asset cap, trimmed if drift > 49.5%) to equalize risk contributions and reduce drawdown clustering during equity/rate volatility spikes.
 - **Parameters:** `{"vol_window": 63, "rebalance_every_days": 21, "min_vol_floor": 0.04, "max_weight": 0.45}`
-- **Deflated Sharpe Ratio (DSR):** `0.9980` (trial #2, 3500 OOS observations)
+- **Deflated Sharpe Ratio (DSR):** `0.9979` (trial #2, 3500 OOS observations)
+- **Deflated Sharpe (N=20 historical trials):** `0.9458` (vs `N=2` at promotion: `0.9979`)
 - **Perturbation Stability:** worst OOS Sharpe drop `0.039365`
 
-- **Deflated Sharpe (N=20 historical trials):** `0.9465` (vs `N=2` at promotion: `0.9980`)
-
-> Note: Refreshed on the Batch 2 methodology (policy `v1.1.0`, settled `2026-11-23` dataset) without appending a synthetic trial. Historical `experiments/ledger.jsonl` and `experiments/results.tsv` rows are kept append-only as originally recorded under the prior raw-Sharpe convention and are not retroactively rewritten.
+> Note: Metrics refreshed on the Batch 2 methodology after fold-switch cost and DSR-moment fixes (policy `v1.1.0`, settled `2026-11-23` dataset) without appending a synthetic trial (`metrics_refreshed_utc=2026-11-24T08:01:38Z`). Historical `experiments/ledger.jsonl` and `experiments/results.tsv` rows are kept append-only as originally recorded under the prior raw-Sharpe convention and are not retroactively rewritten.
 
 ## Purged Walk-Forward Out-of-Sample vs. SPY Benchmark (Net of 5 bps/side)
 
@@ -24,7 +23,7 @@
 | Sharpe (excess of SHY) | 0.915 | 0.419 | 0.743 |
 | Raw Sharpe (total net) | 1.038 | 1.017 | 0.805 |
 | Sortino (excess of SHY) | 1.278 | 0.600 | 1.035 |
-| Deflated Sharpe (N=2) | 0.9980 | — | — |
+| Deflated Sharpe (N=2) | 0.9979 | — | — |
 | Max Drawdown | -16.15% | -11.59% | -33.72% |
 | Calmar | 0.394 | 0.589 | 0.393 |
 | Daily 95% CVaR | -0.90% | -0.90% | -2.67% |
@@ -76,7 +75,7 @@
 ## Concise Reasoning Trace
 
 - Verdict: PROMOTE `v001_inv_vol_monthly`: OOS Sharpe 0.915 (+0.056 vs `v000_equal_weight_monthly`), all gates passed.
-- Evidence: vs `v000_equal_weight_monthly`: Sharpe +0.056, Max DD reduced (-16.2% vs -22.7%), turnover increased (39% vs 16%).
+- Evidence: vs `v000_equal_weight_monthly`: Sharpe +0.056, Max DD worsened (-16.2% vs 0.0%), turnover increased (39% vs 0%).
 - Drivers: Top contributor `QQQ` (+1.91%/yr), lagging `SHY` (+0.37%/yr). Diversification 4.14 eff. bets, avg cash 0.0%, SPY beta 0.28. Hardest stress regime `2022_rate_shock` (ret -12.2%, DD -15.4%). Fold Sharpe min/med/std=0.21/0.81/0.68 (100% positive).
 - Audit: IS→OOS gap -0.495; perturbation drop +0.039; DSR(n=2)=99.8%; 3x-cost Sharpe drag 0.013.
 - Next: Target `2022_rate_shock` drawdown (-15.4%) using cross-asset correlation/rate-vol awareness without sacrificing bull-regime participation.
